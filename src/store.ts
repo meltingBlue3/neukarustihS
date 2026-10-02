@@ -158,7 +158,9 @@ export async function initialize() {
         ? saved.current
         : null,
     });
-    audio.volume = saved.volume;
+    // Volume is now controlled by the device; ignore the old in-app setting,
+    // which may have been muted before the volume slider was removed.
+    audio.volume = 1;
   } catch {
     useMusic.setState({
       ready: true,

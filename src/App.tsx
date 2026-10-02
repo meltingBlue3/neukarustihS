@@ -248,8 +248,7 @@ function Player({
   const tracks = useMusic((s) => s.tracks),
     current = useMusic((s) => s.current),
     playing = useMusic((s) => s.playing);
-  const playbackMode = useMusic((s) => s.playbackMode),
-    volume = useMusic((s) => s.volume);
+  const playbackMode = useMusic((s) => s.playbackMode);
   const modeLabel =
     playbackMode === "all"
       ? "列表循环"
@@ -363,27 +362,6 @@ function Player({
         <IconButton label="播放队列" onClick={onQueue}>
           <ListMusic size={21} />
         </IconButton>
-      </div>
-      <div className="player-bottom">
-        <label className="volume">
-          <Volume2 size={17} />
-          <input
-            aria-label="音量"
-            type="range"
-            min="0"
-            max="1"
-            step="0.01"
-            value={volume}
-            onChange={(e) =>
-              useMusic.getState().setVolume(Number(e.target.value))
-            }
-          />
-        </label>
-      </div>
-      <div className="player-footnote">
-        <Headphones size={13} />
-        <span>只在此刻，只在本机。</span>
-        <span className="little-star">✳</span>
       </div>
     </section>
   );

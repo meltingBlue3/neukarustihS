@@ -880,41 +880,6 @@ select {
 .primary-play svg {
   stroke-width: 1;
 }
-.player-bottom {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: 23px;
-}
-.volume {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: #81869a;
-  width: 130px;
-}
-.volume input {
-  width: 90px;
-  height: 3px;
-}
-.player-footnote {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding-top: 22px;
-  border-top: 1px solid #2c2f3f;
-  font-size: 10px;
-  color: #6c7186;
-  margin-top: auto;
-}
-.player-bottom + .player-footnote {
-  margin-top: 26px;
-}
-.little-star {
-  margin-left: auto;
-  font-size: 22px;
-  color: #606c9b;
-}
 .lyrics-empty {
   display: flex;
   flex-direction: column;
@@ -946,7 +911,7 @@ select {
   display: block;
   width: 100%;
   text-align: left;
-  font-size: 19px;
+  font-size: 17px;
   color: #696f86;
   line-height: 1.7;
   padding: 10px 0;
@@ -957,7 +922,7 @@ select {
   color: var(--lime);
 }
 .plain-lyrics {
-  font-size: 17px;
+  font-size: 16px;
   line-height: 2.2;
   white-space: pre-line;
   color: #c4ccdd;
@@ -1757,6 +1722,11 @@ select {
     max-width: 42dvh;
     margin: auto;
   }
+  .mobile-player .player-art-area:has(.lyrics-scroll) {
+    aspect-ratio: auto;
+    height: max(220px, calc(100dvh - 350px));
+    max-height: none;
+  }
   .mobile-player .song-heading {
     margin-top: 25px;
   }
@@ -1784,19 +1754,8 @@ select {
     height: 65px;
     min-width: 65px;
   }
-  .mobile-player .player-bottom {
-    margin-top: 15px;
-  }
-  .mobile-player .player-footnote {
-    margin-top: auto;
-    padding-top: 14px;
-    padding-bottom: 0;
-  }
-  .mobile-player .player-bottom + .player-footnote {
-    margin-top: 16px;
-  }
   .mobile-player .lyric {
-    font-size: 23px;
+    font-size: 20px;
   }
   .toast {
     bottom: calc(150px + env(safe-area-inset-bottom));
@@ -1951,9 +1910,6 @@ select {
   .mobile-player .player-art-area,
   .mobile-player .sleeve {
     max-height: 39dvh;
-  }
-  .player-footnote {
-    font-size: 9px;
   }
 }
 .import-options {
