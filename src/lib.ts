@@ -15,6 +15,12 @@ export interface Track {
   cover?: Blob;
   lyrics?: string;
   handle?: MusicHandle;
+  sourcePath?: string;
+}
+export interface MusicSource {
+  file: File;
+  handle?: MusicHandle;
+  relativePath?: string;
 }
 export interface Playlist {
   id: string;

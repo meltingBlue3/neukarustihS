@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { set, del, values, createStore } from "idb-keyval";
 import { fileId, isAudio, nextTrack } from "./lib";
-import type { Track, Playlist, MusicHandle } from "./lib";
+import type { Track, Playlist, MusicSource } from "./lib";
 
 const database = createStore("neukarustihs-v1", "tracks");
 const files = new Map<string, File>();
@@ -148,9 +148,7 @@ export async function initialize() {
   }
 }
 
-export async function importMusic(
-  incoming: { file: File; handle?: MusicHandle }[],
-) {
+export async function importMusic(incoming: MusicSource[]) {
   if (useMusic.getState().importing) return;
   const music = incoming.filter((x) => isAudio(x.file));
   const lyrics = incoming.filter((x) => /\.lrc$/i.test(x.file.name));
@@ -165,14 +163,19 @@ export async function importMusic(
   try {
     const { parseBlob } = await import("music-metadata");
     for (let i = 0; i < music.length; i++) {
-      const { file, handle } = music[i];
+      const { file, handle, relativePath } = music[i];
+      const sourcePath = relativePath || file.webkitRelativePath || undefined;
       useMusic.setState({ importing: `正在读取 ${i + 1} / ${music.length}` });
       const id = fileId(file);
       files.set(id, file);
       const existing = useMusic.getState().tracks.find((t) => t.id === id);
       if (existing) {
-        if (handle) {
-          const updated = { ...existing, handle };
+        if (handle || sourcePath) {
+          const updated = {
+            ...existing,
+            handle: handle || existing.handle,
+            sourcePath: sourcePath || existing.sourcePath,
+          };
           await set(id, updated, database);
           useMusic.setState((s) => ({
             tracks: s.tracks.map((t) => (t.id === id ? updated : t)),
@@ -192,6 +195,7 @@ export async function importMusic(
         duration: 0,
         added: Date.now(),
         handle,
+        sourcePath,
       };
       try {
         const metadata = await parseBlob(file, { duration: false });
@@ -221,12 +225,16 @@ export async function importMusic(
       added++;
     }
     let matched = 0;
-    for (const { file } of lyrics) {
+    for (const { file, relativePath } of lyrics) {
       const stem = file.name.replace(/\.lrc$/i, "").toLowerCase();
+      const lyricPath = relativePath || file.webkitRelativePath;
       const matches = useMusic
         .getState()
-        .tracks.filter(
-          (t) => t.name.replace(/\.[^.]+$/, "").toLowerCase() === stem,
+        .tracks.filter((t) =>
+          lyricPath
+            ? t.sourcePath?.replace(/\.[^/.]+$/, "") ===
+              lyricPath.replace(/\.lrc$/i, "")
+            : t.name.replace(/\.[^.]+$/, "").toLowerCase() === stem,
         );
       for (const track of matches) {
         await saveLyrics(track.id, await file.text());

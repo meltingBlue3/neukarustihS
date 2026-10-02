@@ -48,7 +48,7 @@ import {
   useMusic,
 } from "./store";
 import { formatTime, parseLrc } from "./lib";
-import type { MusicHandle, Track } from "./lib";
+import type { MusicHandle, MusicSource, Track } from "./lib";
 import { updateApp } from "./pwa";
 import "./App.css";
 
@@ -401,6 +401,7 @@ function App() {
     [sort, setSort] = useState("added");
   const [playerOpen, setPlayerOpen] = useState(false),
     [queueOpen, setQueueOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const [actionTrack, setActionTrack] = useState<Track | null>(null),
     [playlistForm, setPlaylistForm] = useState<"new" | "rename" | null>(null);
   const [playlistName, setPlaylistName] = useState(""),
@@ -555,27 +556,40 @@ function App() {
       try {
         const directory = await pickerWindow.showDirectoryPicker();
         useMusic.setState({ importing: "正在读取文件夹…" });
-        const incoming: { file: File; handle: MusicHandle }[] = [];
-        async function walk(dir: Directory) {
+        const incoming: MusicSource[] = [];
+        let skipped = 0;
+        async function walk(dir: Directory, path: string) {
           for await (const handle of dir.values()) {
-            if (handle.kind === "directory") await walk(handle as Directory);
-            else {
-              const fileHandle = handle as MusicHandle;
-              if (
-                /\.(mp3|flac|m4a|aac|ogg|opus|wav|webm|aiff?|lrc)$/i.test(
-                  fileHandle.name,
+            try {
+              if (handle.kind === "directory")
+                await walk(handle as Directory, `${path}/${handle.name}`);
+              else {
+                const fileHandle = handle as MusicHandle;
+                if (
+                  /\.(mp3|flac|m4a|aac|ogg|opus|wav|webm|aiff?|lrc)$/i.test(
+                    fileHandle.name,
+                  )
                 )
-              )
-                incoming.push({
-                  file: await fileHandle.getFile(),
-                  handle: fileHandle,
-                });
+                  incoming.push({
+                    file: await fileHandle.getFile(),
+                    handle: fileHandle,
+                    relativePath: `${path}/${fileHandle.name}`,
+                  });
+              }
+            } catch {
+              skipped++;
             }
           }
         }
-        await walk(directory);
+        await walk(directory, directory.name);
         useMusic.setState({ importing: "" });
         await importMusic(incoming);
+        if (skipped)
+          useMusic
+            .getState()
+            .notify(
+              `${useMusic.getState().notice} · ${skipped} 个文件或子文件夹无法读取，已跳过`,
+            );
         return;
       } catch (e) {
         useMusic.setState({ importing: "" });
@@ -653,6 +667,7 @@ function App() {
       />
       <input
         ref={folderInput}
+        data-testid="folder-input"
         type="file"
         multiple
         {...{ webkitdirectory: "" }}
@@ -811,7 +826,7 @@ function App() {
             {view !== "settings" && (
               <button
                 className="primary import-top"
-                onClick={() => void pickMusic()}
+                onClick={() => setImportOpen(true)}
                 disabled={!!importing || !ready}
               >
                 {importing ? (
@@ -841,7 +856,7 @@ function App() {
                 <p>
                   {tracks.length
                     ? `${tracks.length} 首私藏，随时开始。`
-                    : "从本机挑几首歌，剩下的时间交给音乐。"}
+                    : "导入音乐文件夹，把你的私藏带进来。"}
                 </p>
                 <div className="welcome-actions">
                   <button
@@ -853,23 +868,29 @@ function App() {
                             selectedTracks[0].id,
                             selectedTracks.map((t) => t.id),
                           )
-                        : void pickMusic()
+                        : void pickFolder()
                     }
                   >
                     {tracks.length ? (
                       <Play size={17} fill="currentColor" />
                     ) : (
-                      <Plus size={18} />
+                      <FolderOpen size={18} />
                     )}
-                    {tracks.length ? "播放全部" : "选择音乐"}
+                    {tracks.length ? "播放全部" : "导入文件夹"}
                   </button>
                   <button
                     className="text-button"
                     disabled={!!importing || !ready}
-                    onClick={() => void pickFolder()}
+                    onClick={() =>
+                      tracks.length ? void pickFolder() : void pickMusic()
+                    }
                   >
-                    <FolderOpen size={16} />
-                    选择文件夹
+                    {tracks.length ? (
+                      <FolderOpen size={16} />
+                    ) : (
+                      <Music2 size={16} />
+                    )}
+                    {tracks.length ? "添加文件夹" : "选择文件"}
                   </button>
                 </div>
               </div>
@@ -1151,7 +1172,7 @@ function App() {
                 </p>
                 <button
                   className="secondary"
-                  onClick={() => void pickMusic()}
+                  onClick={() => setImportOpen(true)}
                   disabled={!!importing || !ready}
                 >
                   <FolderOpen size={17} />
@@ -1212,6 +1233,46 @@ function App() {
           </button>
         ))}
       </nav>
+      {importOpen && (
+        <Modal title="导入音乐" onClose={() => setImportOpen(false)}>
+          <div className="import-options">
+            <button
+              className="import-option recommended"
+              onClick={() => {
+                setImportOpen(false);
+                void pickFolder();
+              }}
+              disabled={!!importing || !ready}
+            >
+              <FolderOpen size={27} />
+              <span>
+                <strong>导入文件夹</strong>
+                <small>包含子文件夹里的音乐和同名歌词</small>
+              </span>
+            </button>
+            <button
+              className="import-option"
+              onClick={() => {
+                setImportOpen(false);
+                void pickMusic();
+              }}
+              disabled={!!importing || !ready}
+            >
+              <Music2 size={25} />
+              <span>
+                <strong>选择音乐文件</strong>
+                <small>也可以一次选择多首歌曲</small>
+              </span>
+            </button>
+          </div>
+          <p className="import-help">
+            音乐在几个文件夹里？可以逐个添加，已导入的歌曲不会重复出现。重新选择原文件夹也能连接已有音乐。
+          </p>
+          <p className="import-help">
+            如果设备的选择器不支持文件夹，请使用「选择音乐文件」多选导入。
+          </p>
+        </Modal>
+      )}
       {playerOpen && (
         <Modal title="正在播放" onClose={() => setPlayerOpen(false)}>
           <Player

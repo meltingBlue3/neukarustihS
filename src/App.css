@@ -1907,6 +1907,50 @@ select {
     font-size: 9px;
   }
 }
+.import-options {
+  display: grid;
+  gap: 12px;
+}
+.import-option {
+  display: flex;
+  gap: 15px;
+  align-items: center;
+  padding: 20px 15px;
+  text-align: left;
+  border: 1px solid #3b4256;
+  background: #232837;
+  border-radius: 8px;
+  width: 100%;
+}
+.import-option.recommended {
+  border-color: #d8f36a70;
+  background: #d8f36a0a;
+  color: var(--lime);
+}
+.import-option span {
+  min-width: 0;
+}
+.import-option strong {
+  display: block;
+  font-size: 16px;
+  font-weight: 600;
+}
+.import-option small {
+  display: block;
+  font-size: 13px;
+  line-height: 1.7;
+  color: #a5adc1;
+  margin-top: 6px;
+}
+.import-option:hover {
+  background: #333b4b;
+}
+.import-help {
+  font-size: 13px;
+  color: #9da8c1;
+  line-height: 1.9;
+  margin-top: 17px;
+}
 .modal-notice {
   font-size: 13px;
   line-height: 1.8;

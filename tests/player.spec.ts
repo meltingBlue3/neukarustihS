@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseLrc, nextTrack } from "../src/lib";
 
@@ -64,7 +64,7 @@ test("mobile import, playback, seek, favorite, lyrics, playlist, persistence and
   });
   await page.getByTestId("music-input").setInputFiles([first, second, lyric]);
   await expect(page.locator(".track-row")).toHaveCount(2);
-  await expect(page.getByRole("status")).toContainText("已导入 2 首");
+  await expect(page.locator(".toast")).toContainText("已导入 2 首");
   await page
     .getByRole("main")
     .getByRole("button", {
@@ -122,9 +122,9 @@ test("mobile import, playback, seek, favorite, lyrics, playlist, persistence and
       exact: true,
     })
     .click();
-  await expect(page.getByRole("status")).toContainText("需要重新连接文件");
+  await expect(page.locator(".toast")).toContainText("需要重新连接文件");
   await page.getByTestId("music-input").setInputFiles([first, second]);
-  await expect(page.getByRole("status")).toContainText("已连接 2 首");
+  await expect(page.locator(".toast")).toContainText("已连接 2 首");
   await page
     .getByRole("main")
     .getByRole("button", {
@@ -258,4 +258,116 @@ test("PWA manifest, offline reload and offline import", async ({
       .locator(".mini-player")
       .getByRole("button", { name: "暂停", exact: true }),
   ).toBeVisible();
+});
+
+test("folder fallback imports nested albums, scopes lyrics, deduplicates and reconnects", async ({
+  page,
+}) => {
+  const folder = resolve(fixtures, "Folder collection");
+  const albumA = resolve(folder, "Album A");
+  const albumB = resolve(folder, "Album B", "Disc 1");
+  mkdirSync(albumA, { recursive: true });
+  mkdirSync(albumB, { recursive: true });
+  copyFileSync(first, resolve(albumA, "Same title.wav"));
+  copyFileSync(short, resolve(albumB, "Same title.wav"));
+  writeFileSync(resolve(albumA, "Same title.lrc"), "[00:00.00]Album A lyrics");
+  writeFileSync(resolve(albumB, "Same title.lrc"), "[00:00.00]Album B lyrics");
+  writeFileSync(resolve(folder, "notes.txt"), "Ignore this file");
+  await page.addInitScript(() =>
+    Object.defineProperty(window, "showDirectoryPicker", {
+      value: undefined,
+      configurable: true,
+    }),
+  );
+  await page.goto("./");
+  await page.getByRole("button", { name: "导入音乐", exact: true }).click();
+  const chooserPromise = page.waitForEvent("filechooser");
+  await page
+    .getByRole("dialog", { name: "导入音乐" })
+    .getByRole("button", { name: /^导入文件夹/ })
+    .click();
+  await (await chooserPromise).setFiles(folder);
+  await expect(page.locator(".track-row")).toHaveCount(2);
+  await expect(page.locator(".toast")).toContainText("已匹配 2 份歌词");
+  const longTrack = page
+    .locator(".track-row")
+    .filter({ has: page.locator(".track-duration", { hasText: "0:20" }) });
+  await longTrack.locator(".track-main").click();
+  await page.locator(".mini-song").click();
+  await page
+    .locator(".mobile-player")
+    .getByRole("button", { name: "歌词", exact: true })
+    .click();
+  await expect(page.locator(".mobile-player .lyric")).toHaveText(
+    "Album A lyrics",
+  );
+  await page
+    .locator(".mobile-player")
+    .getByRole("button", { name: "收起播放器" })
+    .click();
+  await page.getByTestId("folder-input").setInputFiles(folder);
+  await expect(page.locator(".toast")).toContainText("已连接 2 首");
+  await expect(page.locator(".track-row")).toHaveCount(2);
+  await page.getByTestId("music-input").setInputFiles(second);
+  await expect(page.locator(".track-row")).toHaveCount(3);
+  await page.reload();
+  await expect(page.locator(".track-row")).toHaveCount(3);
+  await page.getByTestId("folder-input").setInputFiles(folder);
+  await expect(page.locator(".toast")).toContainText("已连接 2 首");
+  await expect(page.locator(".track-row")).toHaveCount(3);
+  await page
+    .locator(".track-row")
+    .filter({ has: page.locator(".track-duration", { hasText: "0:01" }) })
+    .locator(".track-main")
+    .click();
+  await page
+    .locator(".mini-player")
+    .getByRole("button", { name: "暂停", exact: true })
+    .click();
+  await page.locator(".mini-song").click();
+  await page
+    .locator(".mobile-player")
+    .getByRole("button", { name: "歌词", exact: true })
+    .click();
+  await expect(page.locator(".mobile-player .lyric")).toHaveText(
+    "Album B lyrics",
+  );
+});
+
+test("directory picker reads nested file handles and repeated folders", async ({
+  page,
+}) => {
+  await page.goto("./");
+  await expect(
+    page.getByRole("button", { name: "导入音乐", exact: true }),
+  ).toBeEnabled();
+  await page.evaluate(async (base64) => {
+    const root = await navigator.storage.getDirectory();
+    const directory = await root.getDirectoryHandle("Native folder", {
+      create: true,
+    });
+    const nested = await directory.getDirectoryHandle("Nested album", {
+      create: true,
+    });
+    const song = await nested.getFileHandle("Handle song.wav", {
+      create: true,
+    });
+    const output = await song.createWritable();
+    await output.write(Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)));
+    await output.close();
+    const lrc = await nested.getFileHandle("Handle song.lrc", { create: true });
+    const text = await lrc.createWritable();
+    await text.write("[00:00.00]Native folder lyrics");
+    await text.close();
+    Object.defineProperty(window, "showDirectoryPicker", {
+      configurable: true,
+      value: async () => directory,
+    });
+  }, readFileSync(first).toString("base64"));
+  await page.getByRole("button", { name: "导入文件夹", exact: true }).click();
+  await expect(page.locator(".track-row")).toHaveCount(1);
+  await expect(page.locator(".toast")).toContainText("已匹配 1 份歌词");
+  await page.getByRole("button", { name: "添加文件夹", exact: true }).click();
+  await expect(page.locator(".toast")).toContainText("已连接 1 首");
+  await expect(page.locator(".track-row")).toHaveCount(1);
 });
