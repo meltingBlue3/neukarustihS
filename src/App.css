@@ -1712,20 +1712,26 @@ select {
     padding: 7px 13px;
   }
   .mobile-player .player-art-area {
-    max-height: 42dvh;
-    aspect-ratio: 1;
+    height: max(220px, calc(70dvh - 175px));
+    touch-action: pan-y;
+    aspect-ratio: auto;
     width: 100%;
     align-self: center;
     flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
   .mobile-player .sleeve {
-    max-width: 42dvh;
+    width: min(100%, 42dvh);
+    height: auto;
+    aspect-ratio: 1;
     margin: auto;
   }
-  .mobile-player .player-art-area:has(.lyrics-scroll) {
-    aspect-ratio: auto;
-    height: max(220px, calc(100dvh - 350px));
-    max-height: none;
+  .mobile-player .lyrics-scroll,
+  .mobile-player .lyrics-empty {
+    width: 100%;
+    touch-action: pan-y;
   }
   .mobile-player .song-heading {
     margin-top: 25px;
@@ -1907,9 +1913,8 @@ select {
   .mobile-player .song-heading h2 {
     font-size: 22px;
   }
-  .mobile-player .player-art-area,
   .mobile-player .sleeve {
-    max-height: 39dvh;
+    width: min(100%, 39dvh);
   }
 }
 .import-options {

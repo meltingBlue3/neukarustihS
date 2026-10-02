@@ -140,6 +140,96 @@ test("mobile import, playback, seek, favorite, lyrics, playlist, persistence and
   expect(errors).toEqual([]);
 });
 
+test("mobile cover and lyrics keep controls fixed and support horizontal touch swipes", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  await page.goto("http://127.0.0.1:4173/neukarustihS/");
+  await page.getByTestId("music-input").setInputFiles(first);
+  await expect(page.locator(".track-row")).toHaveCount(1);
+  await page.getByTestId("music-input").setInputFiles({
+    name: "Midnight Test.lrc",
+    mimeType: "text/plain",
+    buffer: Buffer.from(
+      Array.from(
+        { length: 20 },
+        (_, i) => `[00:${String(i).padStart(2, "0")}.00]Lyric line ${i}`,
+      ).join("\n"),
+    ),
+  });
+  await page.locator(".track-main").first().click();
+  await page.locator(".mini-song").click();
+  const player = page.locator(".mobile-player");
+  await player.getByRole("button", { name: "暂停", exact: true }).click();
+  const controls = () => player.locator(".play-controls").boundingBox();
+  const original = await controls();
+  const touch = await context.newCDPSession(page);
+  const swipe = async (x: number, y: number, dx: number, dy: number) => {
+    await touch.send("Input.dispatchTouchEvent", {
+      type: "touchStart",
+      touchPoints: [{ x, y }],
+    });
+    for (let step = 1; step <= 8; step++) {
+      await touch.send("Input.dispatchTouchEvent", {
+        type: "touchMove",
+        touchPoints: [{ x: x + (dx * step) / 8, y: y + (dy * step) / 8 }],
+      });
+      await page.waitForTimeout(20);
+    }
+    await touch.send("Input.dispatchTouchEvent", {
+      type: "touchEnd",
+      touchPoints: [],
+    });
+    await page.waitForTimeout(450);
+  };
+  await swipe(280, 280, -170, 5);
+  await expect(player.locator(".lyrics-scroll")).toBeVisible();
+  expect(await controls()).toEqual(original);
+  const beforeSeek = await player
+    .getByRole("slider", { name: "播放进度" })
+    .inputValue();
+  const beforeScroll = await player
+    .locator(".lyrics-scroll")
+    .evaluate((el) => el.scrollTop);
+  await swipe(190, 380, 5, -160);
+  await expect(player.locator(".lyrics-scroll")).toBeVisible();
+  expect(
+    await player.locator(".lyrics-scroll").evaluate((el) => el.scrollTop),
+  ).toBeGreaterThan(beforeScroll);
+  // A horizontal swipe at the last tab must not activate a lyric beneath it.
+  await swipe(280, 280, -170, 5);
+  expect(
+    await player.getByRole("slider", { name: "播放进度" }).inputValue(),
+  ).toBe(beforeSeek);
+  await swipe(90, 280, 180, 5);
+  await expect(player.locator(".sleeve")).toBeVisible();
+  expect(await controls()).toEqual(original);
+  await player.getByRole("button", { name: "歌词", exact: true }).click();
+  expect(await controls()).toEqual(original);
+  await player
+    .getByRole("button", { name: "Lyric line 3", exact: true })
+    .click();
+  await expect(player.getByRole("slider", { name: "播放进度" })).toHaveValue(
+    "3",
+  );
+  for (const viewport of [
+    { width: 320, height: 640 },
+    { width: 412, height: 820 },
+  ]) {
+    await page.setViewportSize(viewport);
+    const lyrics = await controls();
+    await player.getByRole("button", { name: "封面", exact: true }).click();
+    expect(await controls()).toEqual(lyrics);
+    expect(lyrics!.y + lyrics!.height).toBeLessThan(viewport.height);
+    await player.getByRole("button", { name: "歌词", exact: true }).click();
+  }
+  await context.close();
+});
+
 test("desktop search, sort, queue, deletion and responsive layout", async ({
   page,
 }) => {

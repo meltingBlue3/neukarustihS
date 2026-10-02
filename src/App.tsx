@@ -258,6 +258,8 @@ function Player({
   const favorites = useMusic((s) => s.favorites),
     toggleFavorite = useMusic((s) => s.toggleFavorite);
   const [page, setPage] = useState<"cover" | "lyrics">("cover");
+  const swipeStart = useRef<{ x: number; y: number } | null>(null);
+  const suppressClickUntil = useRef(0);
   const track = tracks.find((t) => t.id === current);
   return (
     <section
@@ -290,7 +292,33 @@ function Player({
           </button>
         </div>
       </div>
-      <div className="player-art-area">
+      <div
+        className="player-art-area"
+        onPointerDown={(event) => {
+          if (mobile && event.isPrimary && event.pointerType === "touch") {
+            swipeStart.current = { x: event.clientX, y: event.clientY };
+          }
+        }}
+        onPointerCancel={() => {
+          swipeStart.current = null;
+        }}
+        onPointerUp={(event) => {
+          const start = swipeStart.current;
+          swipeStart.current = null;
+          if (!start) return;
+          const dx = event.clientX - start.x;
+          const dy = event.clientY - start.y;
+          if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+          suppressClickUntil.current = performance.now() + 400;
+          setPage(dx < 0 ? "lyrics" : "cover");
+        }}
+        onClickCapture={(event) => {
+          if (performance.now() < suppressClickUntil.current) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        }}
+      >
         {page === "cover" ? (
           <div className="sleeve">
             <Cover track={track} />
