@@ -1,0 +1,67 @@
+# neukarustihS
+
+手机优先的本地音乐播放器。午夜蓝、酸柠绿，和属于自己的音乐收藏。
+
+[打开播放器](https://meltingblue3.github.io/neukarustihS/)
+
+## 使用
+
+1. 点击「导入音乐」选择本机文件，也可以选择文件夹或拖拽文件。
+2. 点击歌曲播放；底部迷你播放器可展开封面、进度和歌词。
+3. 歌曲的「更多操作」可以收藏、加入队列、管理歌单和导入 LRC。
+4. 在 Android Chrome 菜单选择「安装应用」或「添加到主屏幕」。也可以使用设置页的安装按钮；是否显示安装对话框由浏览器决定。
+
+支持常见 MP3、FLAC、M4A、AAC、WAV、OGG/Opus 等文件的元数据读取；实际播放格式取决于浏览器解码能力。支持内嵌封面、歌曲/艺术家/专辑搜索、排序、收藏、歌单、队列调整、随机、单曲/列表循环、睡眠定时和系统媒体控制。
+
+同名 LRC 和音乐一起导入时自动匹配。也可以在播放器歌词页单独导入。点击歌词可跳转；支持多时间戳和 offset。
+
+## 本地数据与离线
+
+- 音频仅从用户选择的本地文件播放，不上传服务器、不复制到浏览器存储。
+- IndexedDB 保存歌曲信息、封面、歌词和可用的文件句柄；localStorage 保存歌单、收藏和偏好。
+- 重新打开后，浏览器可能要求重新选择原来的文件。重新选择会连接已有条目，保留收藏和歌单。支持文件访问 API 的浏览器会尝试恢复授权。
+- 第一次联网访问后，Service Worker 缓存完整应用及解析器。之后可以断网打开、选择本机文件和播放。
+- 浏览器清除网站数据、隐私模式结束、存储回收等操作可能移除记录。不同浏览器、设备之间不自动同步。
+- 仅移除音乐库条目，不会删除原始文件。后台播放、锁屏控制和文件访问支持受设备、浏览器及系统省电影响。
+- 原创插画随应用提供，不包含任何第三方歌曲。
+
+## 开发
+
+Node.js 22.12+（建议 24），npm。
+
+```sh
+npm ci
+npm run dev
+```
+
+开发地址：`http://localhost:5173/neukarustihS/`。
+
+```sh
+npm run build
+npx playwright install chromium
+npm test
+```
+
+测试使用生成的短 WAV 音频，验证实际播放、歌词跳转、收藏和歌单、重连、队列、自动切歌、移动布局与离线导入。测试音频和截图不会提交。
+
+## 发布 GitHub Pages
+
+仓库的 Pages 源设置为 `gh-pages` 分支根目录。确认 GitHub Git 凭据已经配置：
+
+```sh
+npm run deploy
+```
+
+命令先执行类型检查和生产构建，再把 `dist` 推送到 `gh-pages`。源代码维护在 `main` 分支。页面更新通过应用设置里的更新按钮应用，避免播放过程中自动刷新。
+
+更换仓库名时，需要同步修改 `vite.config.ts` 中的 `base`、manifest 的 `id`、`scope` 与 `start_url`。
+
+## 结构
+
+- `src/App.tsx`：音乐库、播放器、歌单、设置和手机界面。
+- `src/store.ts`：持久化、文件导入、音频生命周期与媒体控制。
+- `src/lib.ts`：文件标识、时间格式、LRC 解析和队列边界。
+- `src/pwa.ts`、`vite.config.ts`：安装清单、缓存和可控更新。
+- `tests/player.spec.ts`：浏览器端播放及离线回归。
+
+React + TypeScript + Vite；Zustand；IndexedDB / idb-keyval；music-metadata；vite-plugin-pwa；Lucide。
