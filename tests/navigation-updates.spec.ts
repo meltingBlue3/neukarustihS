@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
 import { resolve, extname, sep } from "node:path";
+const { version } = JSON.parse(readFileSync("package.json", "utf8"));
 
 test("mobile pages expose only relevant actions and installed apps hide installation", async ({
   page,
@@ -26,7 +27,7 @@ test("mobile pages expose only relevant actions and installed apps hide installa
       page.getByRole("button", { name: "导入音乐", exact: true }),
     ).toHaveCount(0);
   }
-  await expect(page.getByText("v1.1.0", { exact: true })).toBeVisible();
+  await expect(page.getByText(`v${version}`, { exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "安装 neukarustihS", exact: true }),
   ).toBeVisible();

@@ -388,6 +388,9 @@ h1 {
   margin-top: 0;
   min-height: 66px;
 }
+.welcome + .library-toolbar {
+  margin-top: 22px;
+}
 .library-tabs .play-all {
   font-size: 12px;
   color: var(--lime);

@@ -343,7 +343,7 @@ export async function play(
         : [
             {
               src: new URL(
-                `${import.meta.env.BASE_URL}icon-512.png`,
+                `${import.meta.env.BASE_URL}icon-music-512.png`,
                 location.origin,
               ).href,
               sizes: "512x512",

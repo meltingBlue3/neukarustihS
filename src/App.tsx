@@ -5,7 +5,6 @@ import {
   ArrowUp,
   Check,
   ChevronDown,
-  Disc3,
   Download,
   Ellipsis,
   FolderOpen,
@@ -726,7 +725,12 @@ function App() {
           }}
         >
           <span className="brand-icon">
-            <Disc3 size={25} />
+            <img
+              src={`${import.meta.env.BASE_URL}favicon.svg`}
+              alt=""
+              width={28}
+              height={28}
+            />
           </span>
           <span>
             neukarustihS<small>LOCAL MUSIC / AFTER HOURS</small>
@@ -809,7 +813,12 @@ function App() {
       <main>
         <header className="topbar">
           <div className="mobile-brand">
-            <Disc3 size={23} />
+            <img
+              src={`${import.meta.env.BASE_URL}favicon.svg`}
+              alt=""
+              width={28}
+              height={28}
+            />
             <strong>neukarustihS</strong>
           </div>
           <span className="desktop-breadcrumb">
@@ -853,8 +862,8 @@ function App() {
               </button>
             )}
           </div>
-          {view === "library" && !tracks.length && !search && (
-            <section className="welcome">
+          {view === "library" && (
+            <section className={`welcome ${tracks.length ? "compact" : ""}`}>
               <div className="welcome-copy">
                 <span className="eyebrow">YOUR MUSIC. YOUR MIDNIGHT.</span>
                 <h2>
@@ -863,11 +872,19 @@ function App() {
                   调成你的频率。
                 </h2>
                 <p>
-                  点击右上角「导入音乐」，
-                  <br />
-                  选择你的音乐文件夹或歌曲。
+                  {tracks.length ? (
+                    `${tracks.length} 首私藏，今夜慢慢听。`
+                  ) : (
+                    <>
+                      点击右上角「导入音乐」，
+                      <br />
+                      选择你的音乐文件夹或歌曲。
+                    </>
+                  )}
                 </p>
-                <p className="welcome-formats">MP3 · FLAC · M4A · WAV</p>
+                {!tracks.length && (
+                  <p className="welcome-formats">MP3 · FLAC · M4A · WAV</p>
+                )}
               </div>
               <div className="welcome-art">
                 <Cover />

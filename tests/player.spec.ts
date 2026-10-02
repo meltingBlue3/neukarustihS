@@ -154,6 +154,9 @@ test("desktop search, sort, queue, deletion and responsive layout", async ({
   });
   await page.getByTestId("music-input").setInputFiles([first, second]);
   await expect(page.locator(".track-row")).toHaveCount(2);
+  await expect(page.locator(".welcome")).toBeVisible();
+  await expect(page.locator(".welcome")).toContainText("2 首私藏");
+  await expect(page.locator(".welcome button")).toHaveCount(0);
   await page.getByRole("textbox", { name: "搜索音乐" }).fill("midnight");
   await expect(page.locator(".track-row")).toHaveCount(1);
   await page.getByRole("button", { name: "清除搜索" }).click();

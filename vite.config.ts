@@ -17,8 +17,8 @@ export default defineConfig({
       registerType: "prompt",
       includeAssets: [
         "favicon.svg",
-        "icon-192.png",
-        "icon-512.png",
+        "icon-music-192.png",
+        "icon-music-512.png",
         "night-cover.webp",
       ],
       manifest: {
@@ -34,19 +34,19 @@ export default defineConfig({
         start_url: "/neukarustihS/",
         icons: [
           {
-            src: "icon-192.png",
+            src: "icon-music-192.png",
             sizes: "192x192",
             type: "image/png",
             purpose: "any",
           },
           {
-            src: "icon-512.png",
+            src: "icon-music-512.png",
             sizes: "512x512",
             type: "image/png",
             purpose: "any",
           },
           {
-            src: "icon-maskable.png",
+            src: "icon-music-maskable.png",
             sizes: "512x512",
             type: "image/png",
             purpose: "maskable",
