@@ -812,7 +812,20 @@ select {
   justify-content: space-between;
   align-items: center;
   margin-top: 19px;
-  gap: 9px;
+  gap: 6px;
+}
+.icon-button.mode-button {
+  flex-direction: column;
+  gap: 4px;
+  color: var(--lime);
+  width: 52px;
+  min-width: 52px;
+  height: 48px;
+}
+.mode-button small {
+  font-size: 11px;
+  white-space: nowrap;
+  font-weight: 400;
 }
 .primary-play {
   background: var(--lime);

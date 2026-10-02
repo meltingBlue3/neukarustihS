@@ -248,9 +248,14 @@ function Player({
   const tracks = useMusic((s) => s.tracks),
     current = useMusic((s) => s.current),
     playing = useMusic((s) => s.playing);
-  const shuffle = useMusic((s) => s.shuffle),
-    repeat = useMusic((s) => s.repeat),
+  const playbackMode = useMusic((s) => s.playbackMode),
     volume = useMusic((s) => s.volume);
+  const modeLabel =
+    playbackMode === "all"
+      ? "列表循环"
+      : playbackMode === "one"
+        ? "单曲循环"
+        : "随机播放";
   const favorites = useMusic((s) => s.favorites),
     toggleFavorite = useMusic((s) => s.toggleFavorite);
   const [page, setPage] = useState<"cover" | "lyrics">("cover");
@@ -325,11 +330,18 @@ function Player({
       <Progress />
       <div className="play-controls">
         <IconButton
-          label="随机播放"
-          active={shuffle}
-          onClick={() => useMusic.getState().toggleShuffle()}
+          label={`播放模式：${modeLabel}`}
+          className="mode-button"
+          onClick={() => useMusic.getState().cyclePlaybackMode()}
         >
-          <Shuffle size={20} />
+          {playbackMode === "shuffle" ? (
+            <Shuffle size={20} />
+          ) : playbackMode === "one" ? (
+            <Repeat1 size={21} />
+          ) : (
+            <Repeat size={21} />
+          )}
+          <small>{modeLabel}</small>
         </IconButton>
         <IconButton label="上一首" onClick={() => skip(-1)} disabled={!current}>
           <SkipBack fill="currentColor" size={23} />
@@ -348,12 +360,8 @@ function Player({
         <IconButton label="下一首" onClick={() => skip(1)} disabled={!current}>
           <SkipForward fill="currentColor" size={23} />
         </IconButton>
-        <IconButton
-          label={`循环模式：${repeat === "all" ? "列表循环" : repeat === "one" ? "单曲循环" : "顺序播放"}`}
-          active={repeat !== "off"}
-          onClick={() => useMusic.getState().cycleRepeat()}
-        >
-          {repeat === "one" ? <Repeat1 size={21} /> : <Repeat size={21} />}
+        <IconButton label="播放队列" onClick={onQueue}>
+          <ListMusic size={21} />
         </IconButton>
       </div>
       <div className="player-bottom">
@@ -371,9 +379,6 @@ function Player({
             }
           />
         </label>
-        <IconButton label="播放队列" onClick={onQueue}>
-          <ListMusic size={21} />
-        </IconButton>
       </div>
       <div className="player-footnote">
         <Headphones size={13} />

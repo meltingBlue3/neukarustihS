@@ -195,7 +195,9 @@ test("desktop search, sort, queue, deletion and responsive layout", async ({
   }
 });
 
-test("track end advances and sequential mode stops", async ({ page }) => {
+test("unified modes control list wrap, single repeat and random track completion", async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto("./");
   await expect(
@@ -212,16 +214,159 @@ test("track end advances and sequential mode stops", async ({ page }) => {
   await expect(page.locator(".desktop-player h2")).toHaveText("Midnight Test", {
     timeout: 5000,
   });
-  await page.getByRole("button", { name: "循环模式：列表循环" }).click();
-  await page.getByRole("button", { name: "循环模式：单曲循环" }).click();
   await page.getByRole("slider", { name: "播放进度" }).fill("19.7");
+  await expect(page.locator(".desktop-player h2")).toHaveText("Short Test");
+  await expect(page.locator(".desktop-player h2")).toHaveText("Midnight Test");
+  await page
+    .getByRole("button", { name: "播放模式：列表循环", exact: true })
+    .click();
+  await page.getByRole("slider", { name: "播放进度" }).fill("19.7");
+  await expect
+    .poll(async () =>
+      Number(await page.getByRole("slider", { name: "播放进度" }).inputValue()),
+    )
+    .toBeLessThan(3);
   await expect(
     page
       .locator(".desktop-player")
-      .getByRole("button", { name: "播放", exact: true }),
+      .getByRole("button", { name: "暂停", exact: true }),
   ).toBeVisible({ timeout: 5000 });
   await expect(page.locator(".desktop-player h2")).toHaveText("Midnight Test");
+  await page
+    .getByRole("button", { name: "播放模式：单曲循环", exact: true })
+    .click();
+  await page.getByRole("slider", { name: "播放进度" }).fill("19.7");
+  await expect(page.locator(".desktop-player h2")).toHaveText("Short Test");
+  await expect(
+    page.getByRole("button", { name: "播放模式：随机播放", exact: true }),
+  ).toBeVisible();
 });
+
+test("one mode button defaults to list loop and preserves each choice across app reopen", async ({
+  page,
+  context,
+}) => {
+  await page.goto("./");
+  await expect(
+    page.getByRole("button", { name: "导入音乐", exact: true }),
+  ).toBeEnabled();
+  await page.getByTestId("music-input").setInputFiles([first, second]);
+  await expect(page.locator(".track-row")).toHaveCount(2);
+  await page.getByRole("button", { name: "播放全部", exact: true }).click();
+  await page.locator(".mini-song").click();
+  const player = page.locator(".mobile-player");
+  await expect(player.getByRole("button", { name: /^播放模式：/ })).toHaveCount(
+    1,
+  );
+  await expect(
+    player.getByRole("button", { name: "播放模式：列表循环", exact: true }),
+  ).toBeVisible();
+  for (const [previous, next, value] of [
+    ["列表循环", "单曲循环", "one"],
+    ["单曲循环", "随机播放", "shuffle"],
+    ["随机播放", "列表循环", "all"],
+  ]) {
+    await player
+      .getByRole("button", { name: `播放模式：${previous}`, exact: true })
+      .click();
+    await expect(
+      player.getByRole("button", { name: `播放模式：${next}`, exact: true }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            JSON.parse(localStorage.getItem("neukarustihs-preferences-v1")!)
+              .state.playbackMode,
+        ),
+      )
+      .toBe(value);
+    await page.reload();
+    await page.locator(".mini-song").click();
+    await expect(
+      player.getByRole("button", { name: `播放模式：${next}`, exact: true }),
+    ).toBeVisible();
+    const reopened = await context.newPage();
+    await reopened.setViewportSize({ width: 1440, height: 900 });
+    await reopened.goto("./");
+    await expect(
+      reopened.getByRole("button", { name: `播放模式：${next}`, exact: true }),
+    ).toBeVisible();
+    await reopened.close();
+  }
+  await player
+    .getByRole("button", { name: "播放模式：列表循环", exact: true })
+    .click();
+  await player
+    .getByRole("button", { name: "播放模式：单曲循环", exact: true })
+    .click();
+  await player.getByRole("button", { name: "收起播放器" }).click();
+  await page.close();
+  const reopened = await context.newPage();
+  await reopened.setViewportSize({ width: 1440, height: 900 });
+  await reopened.goto("./");
+  await expect(
+    reopened.getByRole("button", { name: "播放模式：随机播放", exact: true }),
+  ).toBeVisible();
+  await reopened.getByTestId("music-input").setInputFiles([first, second]);
+  await expect(reopened.locator(".toast")).toContainText("已连接 2 首");
+  await reopened.getByRole("button", { name: "播放全部", exact: true }).click();
+  await reopened.getByRole("button", { name: "下一首", exact: true }).click();
+  await reopened.getByRole("button", { name: "暂停", exact: true }).click();
+  await expect(
+    reopened.getByRole("button", { name: "播放模式：随机播放", exact: true }),
+  ).toBeVisible();
+  await reopened.close();
+});
+
+for (const [repeat, shuffle, label] of [
+  ["all", false, "列表循环"],
+  ["one", false, "单曲循环"],
+  ["all", true, "随机播放"],
+  ["off", false, "列表循环"],
+] as const) {
+  test(`legacy ${repeat}/${shuffle} preferences migrate to ${label} without losing library preferences`, async ({
+    page,
+  }) => {
+    await page.addInitScript(
+      ({ repeat, shuffle }) =>
+        localStorage.setItem(
+          "neukarustihs-preferences-v1",
+          JSON.stringify({
+            version: 0,
+            state: {
+              repeat,
+              shuffle,
+              favorites: ["saved-track"],
+              playlists: [
+                {
+                  id: "saved-playlist",
+                  name: "Saved Mix",
+                  tracks: ["saved-track"],
+                },
+              ],
+              volume: 0.42,
+            },
+          }),
+        ),
+      { repeat, shuffle },
+    );
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto("./");
+    await expect(
+      page.getByRole("button", { name: `播放模式：${label}`, exact: true }),
+    ).toBeVisible();
+    const saved = await page.evaluate(() =>
+      JSON.parse(localStorage.getItem("neukarustihs-preferences-v1")!),
+    );
+    expect(saved.version).toBe(1);
+    expect(saved.state.favorites).toEqual(["saved-track"]);
+    expect(saved.state.playlists[0].name).toBe("Saved Mix");
+    expect(saved.state.volume).toBe(0.42);
+    expect(saved.state).not.toHaveProperty("repeat");
+    expect(saved.state).not.toHaveProperty("shuffle");
+  });
+}
 
 test("PWA manifest, offline reload and offline import", async ({
   page,

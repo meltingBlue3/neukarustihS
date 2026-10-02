@@ -22,8 +22,7 @@ interface State {
   position: number;
   duration: number;
   volume: number;
-  shuffle: boolean;
-  repeat: "all" | "one" | "off";
+  playbackMode: "all" | "one" | "shuffle";
   history: string[];
   ready: boolean;
   importing: string;
@@ -37,8 +36,7 @@ interface State {
   addToPlaylist: (playlist: string, id: string) => void;
   removeFromPlaylist: (playlist: string, id: string) => void;
   setVolume: (value: number) => void;
-  toggleShuffle: () => void;
-  cycleRepeat: () => void;
+  cyclePlaybackMode: () => void;
 }
 
 export const useMusic = create<State>()(
@@ -53,8 +51,7 @@ export const useMusic = create<State>()(
       position: 0,
       duration: 0,
       volume: 0.8,
-      shuffle: false,
-      repeat: "all",
+      playbackMode: "all",
       history: [],
       ready: false,
       importing: "",
@@ -104,22 +101,44 @@ export const useMusic = create<State>()(
         audio.volume = volume;
         setState({ volume });
       },
-      toggleShuffle: () =>
-        setState((s) => ({ shuffle: !s.shuffle, history: [] })),
-      cycleRepeat: () =>
+      cyclePlaybackMode: () =>
         setState((s) => ({
-          repeat:
-            s.repeat === "all" ? "one" : s.repeat === "one" ? "off" : "all",
+          playbackMode:
+            s.playbackMode === "all"
+              ? "one"
+              : s.playbackMode === "one"
+                ? "shuffle"
+                : "all",
+          history: [],
         })),
     }),
     {
       name: "neukarustihs-preferences-v1",
+      version: 1,
+      migrate: (persisted) => {
+        const saved = (
+          persisted && typeof persisted === "object" ? persisted : {}
+        ) as Partial<State> & { repeat?: unknown; shuffle?: unknown };
+        const playbackMode: State["playbackMode"] =
+          saved.repeat === "one"
+            ? "one"
+            : saved.shuffle === true
+              ? "shuffle"
+              : "all";
+        return {
+          playlists: saved.playlists ?? [],
+          favorites: saved.favorites ?? [],
+          volume: saved.volume ?? 0.8,
+          current: saved.current ?? null,
+          queue: saved.queue ?? [],
+          playbackMode,
+        };
+      },
       partialize: (s) => ({
         playlists: s.playlists,
         favorites: s.favorites,
         volume: s.volume,
-        shuffle: s.shuffle,
-        repeat: s.repeat,
+        playbackMode: s.playbackMode,
         current: s.current,
         queue: s.queue,
       }),
@@ -376,29 +395,28 @@ export function skip(direction: number, ended = false) {
     seek(0);
     return;
   }
-  if (ended && s.repeat === "one" && s.current) {
+  if (ended && s.playbackMode === "one" && s.current) {
     seek(0);
     void play(s.current);
     return;
   }
   let target: string | null;
-  if (s.shuffle && direction < 0 && s.history.length) {
+  if (s.playbackMode === "shuffle" && direction < 0 && s.history.length) {
     target = s.history[s.history.length - 1];
     useMusic.setState({ history: s.history.slice(0, -1) });
     void play(target, undefined, true);
     return;
   }
-  if (s.shuffle && s.queue.length > 1) {
+  if (s.playbackMode === "shuffle" && s.queue.length > 1) {
     const remaining = s.queue.filter(
       (id) => id !== s.current && !s.history.includes(id),
     );
-    if (!remaining.length && s.repeat === "off" && ended) return;
     const candidates = remaining.length
       ? remaining
       : s.queue.filter((id) => id !== s.current);
     if (!remaining.length) useMusic.setState({ history: [] });
     target = candidates[Math.floor(Math.random() * candidates.length)];
-  } else target = nextTrack(s.queue, s.current, direction, s.repeat);
+  } else target = nextTrack(s.queue, s.current, direction, "all");
   if (target) void play(target);
 }
 export function seek(time: number) {
