@@ -20,6 +20,7 @@ import {
   Plus,
   Repeat,
   Repeat1,
+  RefreshCw,
   Search,
   Settings2,
   ShieldCheck,
@@ -49,7 +50,7 @@ import {
 } from "./store";
 import { formatTime, parseLrc } from "./lib";
 import type { MusicHandle, MusicSource, Track } from "./lib";
-import { updateApp } from "./pwa";
+import { updateApp, checkForAppUpdate, hasAppUpdate } from "./pwa";
 import "./App.css";
 
 type View = "library" | "favorites" | "playlists" | "settings";
@@ -415,8 +416,16 @@ function App() {
     );
   const [install, setInstall] = useState<InstallEvent | null>(null),
     [online, setOnline] = useState(navigator.onLine);
-  const [hasUpdate, setHasUpdate] = useState(false),
+  const [hasUpdate, setHasUpdate] = useState(hasAppUpdate),
     [dragging, setDragging] = useState(false);
+  const [isInstalled, setIsInstalled] = useState(
+    () =>
+      matchMedia("(display-mode: standalone)").matches ||
+      !!(navigator as Navigator & { standalone?: boolean }).standalone,
+  );
+  const [checkingUpdate, setCheckingUpdate] = useState(false),
+    [updateStatus, setUpdateStatus] = useState(""),
+    [updating, setUpdating] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null),
     folderInput = useRef<HTMLInputElement>(null),
     lyricInput = useRef<HTMLInputElement>(null);
@@ -436,6 +445,7 @@ function App() {
     };
     const installed = () => {
       setInstall(null);
+      setIsInstalled(true);
       useMusic.getState().notify("已安装，主屏幕见。");
     };
     const connected = () => setOnline(navigator.onLine);
@@ -478,6 +488,9 @@ function App() {
       window.removeEventListener("keydown", keyboard);
     };
   }, []);
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }, [view, playlistId]);
   useEffect(() => {
     if (!notice) return;
     const id = setTimeout(() => useMusic.getState().notify(""), 6500);
@@ -806,9 +819,6 @@ function App() {
             <span className="connection">
               {online ? "LOCAL FIRST" : "离线模式"}
             </span>
-            <IconButton label="安装应用" onClick={() => void installApp()}>
-              <Download size={19} />
-            </IconButton>
           </div>
         </header>
         <div className="main-content">
@@ -828,7 +838,7 @@ function App() {
                 <span className="title-dot">.</span>
               </h1>
             </div>
-            {view !== "settings" && (
+            {view === "library" && (
               <button
                 className="primary import-top"
                 onClick={() => setImportOpen(true)}
@@ -843,61 +853,21 @@ function App() {
               </button>
             )}
           </div>
-          {view === "library" && !search && (
-            <section className={`welcome ${tracks.length ? "compact" : ""}`}>
+          {view === "library" && !tracks.length && !search && (
+            <section className="welcome">
               <div className="welcome-copy">
                 <span className="eyebrow">YOUR MUSIC. YOUR MIDNIGHT.</span>
                 <h2>
-                  {tracks.length ? (
-                    "让喜欢的声音，继续。"
-                  ) : (
-                    <>
-                      把夜晚，
-                      <br />
-                      调成你的频率。
-                    </>
-                  )}
+                  把夜晚，
+                  <br />
+                  调成你的频率。
                 </h2>
                 <p>
-                  {tracks.length
-                    ? `${tracks.length} 首私藏，随时开始。`
-                    : "导入音乐文件夹，把你的私藏带进来。"}
+                  点击右上角「导入音乐」，
+                  <br />
+                  选择你的音乐文件夹或歌曲。
                 </p>
-                <div className="welcome-actions">
-                  <button
-                    className="primary"
-                    disabled={!!importing || !ready}
-                    onClick={() =>
-                      tracks.length
-                        ? void play(
-                            selectedTracks[0].id,
-                            selectedTracks.map((t) => t.id),
-                          )
-                        : void pickFolder()
-                    }
-                  >
-                    {tracks.length ? (
-                      <Play size={17} fill="currentColor" />
-                    ) : (
-                      <FolderOpen size={18} />
-                    )}
-                    {tracks.length ? "播放全部" : "导入文件夹"}
-                  </button>
-                  <button
-                    className="text-button"
-                    disabled={!!importing || !ready}
-                    onClick={() =>
-                      tracks.length ? void pickFolder() : void pickMusic()
-                    }
-                  >
-                    {tracks.length ? (
-                      <FolderOpen size={16} />
-                    ) : (
-                      <Music2 size={16} />
-                    )}
-                    {tracks.length ? "添加文件夹" : "选择文件"}
-                  </button>
-                </div>
+                <p className="welcome-formats">MP3 · FLAC · M4A · WAV</p>
               </div>
               <div className="welcome-art">
                 <Cover />
@@ -906,7 +876,7 @@ function App() {
               <span className="welcome-index">N° 001 / YOUR COLLECTION</span>
             </section>
           )}
-          {listVisible && (
+          {listVisible && (tracks.length > 0 || view !== "library") && (
             <>
               <div className="library-toolbar">
                 <div className="library-tabs">
@@ -928,6 +898,20 @@ function App() {
                     >
                       <Ellipsis size={19} />
                     </IconButton>
+                  )}
+                  {selectedTracks.length > 0 && (
+                    <button
+                      className="text-button play-all"
+                      onClick={() =>
+                        void play(
+                          selectedTracks[0].id,
+                          selectedTracks.map((t) => t.id),
+                        )
+                      }
+                    >
+                      <Play size={15} fill="currentColor" />
+                      播放全部
+                    </button>
                   )}
                 </div>
                 <div className="search-sort">
@@ -1041,16 +1025,6 @@ function App() {
                           ? "在歌曲的「更多操作」中添加到这个歌单。"
                           : "支持 MP3、FLAC、M4A、WAV 等常见格式"}
                   </p>
-                  {!search && view === "library" && (
-                    <button
-                      className="text-button"
-                      onClick={() => void pickMusic()}
-                      disabled={!!importing || !ready}
-                    >
-                      <Upload size={16} />
-                      选择文件，或拖拽音乐到这里
-                    </button>
-                  )}
                   {playlist && (
                     <button
                       className="secondary"
@@ -1098,41 +1072,96 @@ function App() {
                     <p>{p.tracks.length} 首歌曲</p>
                   </button>
                 ))}
-                <button
-                  className="new-playlist-card"
-                  onClick={() => {
-                    setPlaylistName("");
-                    setPlaylistForm("new");
-                  }}
-                >
-                  <Plus size={30} />
-                  <span>创建一张属于你的歌单</span>
-                </button>
+                {!playlists.length && (
+                  <div className="playlist-empty">
+                    <ListMusic size={32} />
+                    <h3>给喜欢的歌一个归处</h3>
+                    <p>点击右上方「新建歌单」，收集你的下一段心情。</p>
+                  </div>
+                )}
               </div>
             </>
           )}
           {view === "settings" && (
             <div className="settings-list">
+              {!isInstalled && (
+                <section>
+                  <h2>
+                    <Download size={20} />
+                    放在主屏幕
+                  </h2>
+                  <p>像 App 一样打开，留一盏灯给你的音乐。</p>
+                  <button className="primary" onClick={() => void installApp()}>
+                    <Download size={17} />
+                    安装 neukarustihS
+                  </button>
+                </section>
+              )}
               <section>
                 <h2>
-                  <Download size={20} />
-                  放在主屏幕
+                  <RefreshCw size={20} />
+                  版本与更新
                 </h2>
-                <p>像 App 一样打开，留一盏灯给你的音乐。</p>
-                <button className="primary" onClick={() => void installApp()}>
-                  <Download size={17} />
-                  安装 neukarustihS
-                </button>
-                {hasUpdate && (
+                <p>
+                  当前版本 <strong>v{__APP_VERSION__}</strong>
+                  {isInstalled ? " · 已安装到主屏幕" : ""}
+                </p>
+                {hasUpdate ? (
+                  <>
+                    <p>新版本已就绪，更新时会短暂中断播放。</p>
+                    <button
+                      className="primary"
+                      disabled={updating}
+                      onClick={async () => {
+                        setUpdating(true);
+                        audio.pause();
+                        try {
+                          await updateApp(true);
+                        } catch {
+                          setUpdating(false);
+                          setUpdateStatus("更新失败，请稍后重试。");
+                        }
+                      }}
+                    >
+                      {updating ? "正在更新…" : "更新并重新打开"}
+                    </button>
+                  </>
+                ) : (
                   <button
                     className="secondary"
-                    onClick={() => {
-                      audio.pause();
-                      void updateApp(true);
+                    disabled={checkingUpdate}
+                    onClick={async () => {
+                      setCheckingUpdate(true);
+                      setUpdateStatus("");
+                      try {
+                        const result = await checkForAppUpdate();
+                        setUpdateStatus(
+                          result === "latest"
+                            ? "已是最新版本"
+                            : result === "offline"
+                              ? "当前离线，联网后即可检查更新。"
+                              : result === "unavailable"
+                                ? "更新服务尚未就绪，请稍后重试。"
+                                : "发现新版本",
+                        );
+                      } catch {
+                        setUpdateStatus("暂时无法检查更新，请稍后重试。");
+                      } finally {
+                        setCheckingUpdate(false);
+                      }
                     }}
                   >
-                    更新并重新打开
+                    <RefreshCw
+                      size={16}
+                      className={checkingUpdate ? "spin" : ""}
+                    />
+                    {checkingUpdate ? "正在检查…" : "检查更新"}
                   </button>
+                )}
+                {updateStatus && (
+                  <p className="update-status" role="status">
+                    {updateStatus}
+                  </p>
                 )}
               </section>
               <section>
@@ -1194,7 +1223,7 @@ function App() {
                   支持系统媒体控制。音频格式、后台播放与锁屏控制取决于设备和浏览器。
                 </p>
                 <div className="about-brand">
-                  neukarustihS <span>v1.0 · AFTER HOURS</span>
+                  neukarustihS <span>AFTER HOURS</span>
                 </div>
               </section>
             </div>

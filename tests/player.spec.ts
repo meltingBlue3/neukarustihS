@@ -3,7 +3,7 @@ import { writeFileSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseLrc, nextTrack } from "../src/lib";
 
-const fixtures = resolve("tests/fixtures");
+const fixtures = resolve(`tests/fixtures/worker-${process.pid}`);
 mkdirSync(fixtures, { recursive: true });
 function wav(name: string, seconds: number) {
   const path = resolve(fixtures, `${name}.wav`);
@@ -509,10 +509,18 @@ test("directory picker reads nested file handles and repeated folders", async ({
       value: async () => directory,
     });
   }, readFileSync(first).toString("base64"));
-  await page.getByRole("button", { name: "导入文件夹", exact: true }).click();
+  await page.getByRole("button", { name: "导入音乐", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "导入音乐" })
+    .getByRole("button", { name: /^导入文件夹/ })
+    .click();
   await expect(page.locator(".track-row")).toHaveCount(1);
   await expect(page.locator(".toast")).toContainText("已匹配 1 份歌词");
-  await page.getByRole("button", { name: "添加文件夹", exact: true }).click();
+  await page.getByRole("button", { name: "导入音乐", exact: true }).click();
+  await page
+    .getByRole("dialog", { name: "导入音乐" })
+    .getByRole("button", { name: /^导入文件夹/ })
+    .click();
   await expect(page.locator(".toast")).toContainText("已连接 1 首");
   await expect(page.locator(".track-row")).toHaveCount(1);
 });

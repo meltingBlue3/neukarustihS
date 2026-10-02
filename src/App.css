@@ -385,8 +385,41 @@ h1 {
   justify-content: space-between;
   gap: 10px;
   border-bottom: 1px solid var(--line);
-  margin-top: 28px;
+  margin-top: 0;
   min-height: 66px;
+}
+.library-tabs .play-all {
+  font-size: 12px;
+  color: var(--lime);
+  gap: 5px;
+}
+.welcome .welcome-formats {
+  margin-top: 20px;
+  font-size: 11px;
+  color: #939ebc;
+  letter-spacing: 1px;
+}
+.playlist-empty {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 55px 12px;
+  color: #969eb5;
+}
+.playlist-empty svg {
+  margin: 0 auto 18px;
+}
+.playlist-empty h3 {
+  color: #d3d8e5;
+  font-size: 16px;
+  font-weight: 500;
+}
+.playlist-empty p {
+  font-size: 13px;
+  line-height: 1.8;
+  margin-top: 12px;
+}
+.update-status {
+  color: var(--lime) !important;
 }
 .library-tabs {
   display: flex;
