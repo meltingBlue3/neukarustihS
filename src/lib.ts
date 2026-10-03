@@ -4,6 +4,11 @@ export type MusicHandle = FileSystemFileHandle & {
   queryPermission: (options: { mode: "read" }) => Promise<PermissionState>;
   requestPermission: (options: { mode: "read" }) => Promise<PermissionState>;
 };
+export type MusicDirectoryHandle = FileSystemDirectoryHandle & {
+  values: () => AsyncIterable<MusicHandle | MusicDirectoryHandle>;
+  queryPermission: (options: { mode: "read" }) => Promise<PermissionState>;
+  requestPermission: (options: { mode: "read" }) => Promise<PermissionState>;
+};
 export interface Track {
   id: string;
   name: string;
@@ -18,11 +23,13 @@ export interface Track {
   lyrics?: string;
   enhancedLyrics?: EnhancedLyrics;
   handle?: MusicHandle;
+  directoryHandle?: MusicDirectoryHandle;
   sourcePath?: string;
 }
 export interface MusicSource {
   file: File;
   handle?: MusicHandle;
+  directoryHandle?: MusicDirectoryHandle;
   relativePath?: string;
 }
 export interface Playlist {

@@ -5,6 +5,7 @@ import { fileId, isAudio, nextTrack } from "./lib";
 import type { Track, Playlist, MusicSource } from "./lib";
 import { isEnhancedLyrics, readEnhancedLyrics } from "./lyrics";
 import type { EnhancedLyrics } from "./lyrics";
+import { findSongSiblings, lyricFileKind, readSiblingLyrics } from "./files";
 
 const database = createStore("neukarustihs-v1", "tracks");
 const files = new Map<string, File>();
@@ -193,17 +194,18 @@ export async function importMusic(incoming: MusicSource[]) {
   try {
     const { parseBlob } = await import("music-metadata");
     for (let i = 0; i < music.length; i++) {
-      const { file, handle, relativePath } = music[i];
+      const { file, handle, relativePath, directoryHandle } = music[i];
       const sourcePath = relativePath || file.webkitRelativePath || undefined;
       useMusic.setState({ importing: `正在读取 ${i + 1} / ${music.length}` });
       const id = fileId(file);
       files.set(id, file);
       const existing = useMusic.getState().tracks.find((t) => t.id === id);
       if (existing) {
-        if (handle || sourcePath) {
+        if (handle || sourcePath || directoryHandle) {
           const updated = {
             ...existing,
             handle: handle || existing.handle,
+            directoryHandle: directoryHandle || existing.directoryHandle,
             sourcePath: sourcePath || existing.sourcePath,
           };
           await set(id, updated, database);
@@ -225,6 +227,7 @@ export async function importMusic(incoming: MusicSource[]) {
         duration: 0,
         added: Date.now(),
         handle,
+        directoryHandle,
         sourcePath,
       };
       try {
@@ -354,6 +357,99 @@ export async function saveEnhancedLyrics(
   useMusic.setState((s) => ({
     tracks: s.tracks.map((t) => (t.id === id ? updated : t)),
   }));
+}
+
+export async function syncTrackLyrics(
+  id: string,
+  incoming?: MusicSource[],
+): Promise<"done" | "needs-folder"> {
+  const track = useMusic.getState().tracks.find((t) => t.id === id);
+  if (!track || useMusic.getState().importing) return "done";
+  if (!incoming && !track.directoryHandle) return "needs-folder";
+  useMusic.setState({ importing: "正在同步歌词…" });
+  try {
+    let candidates: File[],
+      source: Partial<Track> = {};
+    if (incoming) {
+      const { song, siblings, sourcePath } = findSongSiblings(track, incoming);
+      candidates = siblings;
+      source = {
+        directoryHandle: song.directoryHandle,
+        sourcePath: sourcePath || track.sourcePath,
+      };
+    } else {
+      const directory = track.directoryHandle!;
+      try {
+        if (
+          (await directory.queryPermission({ mode: "read" })) !== "granted" &&
+          (await directory.requestPermission({ mode: "read" })) !== "granted"
+        )
+          return "needs-folder";
+        candidates = await readSiblingLyrics(track, directory);
+      } catch (error) {
+        if (
+          error instanceof DOMException &&
+          ["NotAllowedError", "NotFoundError", "SecurityError"].includes(
+            error.name,
+          )
+        )
+          return "needs-folder";
+        throw error;
+      }
+    }
+    const lrc = candidates.filter(
+      (file) => lyricFileKind(track.name, file.name) === "lrc",
+    );
+    const enhanced = candidates.filter(
+      (file) => lyricFileKind(track.name, file.name) === "enhanced",
+    );
+    if (lrc.length > 1 || enhanced.length > 1)
+      throw new Error(
+        "同目录中有多份同名歌词，请保留唯一的 LRC 和增强歌词文件",
+      );
+    // Read and validate both before a single write, so invalid sidecars or
+    // storage failures never leave a half-updated song.
+    const lyrics = lrc[0] ? await lrc[0].text() : undefined;
+    const enhancedLyrics = enhanced[0]
+      ? await readEnhancedLyrics(enhanced[0])
+      : undefined;
+    const latest = useMusic.getState().tracks.find((t) => t.id === id);
+    if (!latest) return "done";
+    const updated = {
+      ...latest,
+      ...source,
+      ...(lyrics !== undefined
+        ? {
+            lyrics,
+            enhancedLyrics:
+              lyrics === latest.lyrics ? latest.enhancedLyrics : undefined,
+          }
+        : {}),
+      ...(enhancedLyrics ? { enhancedLyrics } : {}),
+    };
+    await set(id, updated, database);
+    useMusic.setState((s) => ({
+      tracks: s.tracks.map((t) => (t.id === id ? updated : t)),
+    }));
+    useMusic
+      .getState()
+      .notify(
+        candidates.length
+          ? `已同步${[lrc.length && "歌词", enhanced.length && "翻译与注音"].filter(Boolean).join("、")}`
+          : "同目录未找到同名 LRC 或 .lyrics.json，已保留原有歌词",
+      );
+  } catch (error) {
+    useMusic
+      .getState()
+      .notify(
+        error instanceof Error
+          ? `${error.message}；未修改已有歌词`
+          : "同步失败，未修改已有歌词",
+      );
+  } finally {
+    useMusic.setState({ importing: "" });
+  }
+  return "done";
 }
 
 export async function play(

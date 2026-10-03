@@ -1,5 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { writeFileSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
+import {
+  writeFileSync,
+  mkdirSync,
+  copyFileSync,
+  unlinkSync,
+} from "node:fs";
 import { resolve } from "node:path";
 import { parseLrc, nextTrack } from "../src/lib";
 import { parseEnhancedLyrics } from "../src/lyrics";
@@ -736,62 +741,64 @@ test("folder fallback imports nested albums, scopes lyrics, deduplicates and rec
   );
 });
 
-test("directory picker reads nested file handles and repeated folders", async ({
+test("directory picker saves real directory access and syncs updated lyrics after reload", async ({
   page,
 }) => {
+  const folder = resolve(fixtures, "Native folder"),
+    nested = resolve(folder, "Nested album");
+  mkdirSync(nested, { recursive: true });
+  copyFileSync(first, resolve(nested, "Handle song.wav"));
+  const lrc = resolve(nested, "Handle song.lrc"),
+    enhanced = resolve(nested, "Handle song.lyrics.json");
+  writeFileSync(lrc, "[00:00.00]Native folder lyrics");
+  writeFileSync(enhanced, enhancedLine("Native folder lyrics", "文件夹译文"));
   await page.goto("./");
   await expect(
     page.getByRole("button", { name: "导入音乐", exact: true }),
   ).toBeEnabled();
-  await page.evaluate(async (base64) => {
-    const root = await navigator.storage.getDirectory();
-    const directory = await root.getDirectoryHandle("Native folder", {
-      create: true,
-    });
-    const nested = await directory.getDirectoryHandle("Nested album", {
-      create: true,
-    });
-    const song = await nested.getFileHandle("Handle song.wav", {
-      create: true,
-    });
-    const output = await song.createWritable();
-    await output.write(Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)));
-    await output.close();
-    const lrc = await nested.getFileHandle("Handle song.lrc", { create: true });
-    const text = await lrc.createWritable();
-    await text.write("[00:00.00]Native folder lyrics");
-    await text.close();
-    const enhanced = await nested.getFileHandle("Handle song.lyrics.json", {
-      create: true,
-    });
-    const sidecar = await enhanced.createWritable();
-    await sidecar.write(
-      JSON.stringify({
-        format: "neukarustihs-lyrics",
-        version: 1,
-        lines: [
-          {
-            timeMs: 0,
-            text: "Native folder lyrics",
-            translation: "文件夹译文",
-            segments: [{ text: "Native folder lyrics" }],
-          },
-        ],
-      }),
+  // Acquire a real local directory handle via a browser drop; this exercises
+  // OS-backed permissions and IndexedDB restoration, unlike OPFS test handles.
+  await page.evaluate(() => {
+    document.addEventListener(
+      "drop",
+      async (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const item = event.dataTransfer!.items[0] as DataTransferItem & {
+          getAsFileSystemHandle: () => Promise<FileSystemDirectoryHandle>;
+        };
+        const directory = await item.getAsFileSystemHandle();
+        Object.defineProperty(window, "showDirectoryPicker", {
+          configurable: true,
+          value: async () => directory,
+        });
+      },
+      { capture: true, once: true },
     );
-    await sidecar.close();
-    Object.defineProperty(window, "showDirectoryPicker", {
-      configurable: true,
-      value: async () => directory,
-    });
-  }, readFileSync(first).toString("base64"));
+  });
+  const cdp = await page.context().newCDPSession(page);
+  const data = { items: [], files: [folder], dragOperationsMask: 1 };
+  await cdp.send("Input.dispatchDragEvent", {
+    type: "dragEnter",
+    x: 180,
+    y: 200,
+    data,
+  });
+  await cdp.send("Input.dispatchDragEvent", {
+    type: "drop",
+    x: 180,
+    y: 200,
+    data,
+  });
+  await page.waitForFunction(() =>
+    Object.hasOwn(window, "showDirectoryPicker"),
+  );
   await page.getByRole("button", { name: "导入音乐", exact: true }).click();
   await page
     .getByRole("dialog", { name: "导入音乐" })
     .getByRole("button", { name: /^导入文件夹/ })
     .click();
   await expect(page.locator(".track-row")).toHaveCount(1);
-  await expect(page.locator(".toast")).toContainText("已匹配 1 份歌词");
   await expect(page.locator(".toast")).toContainText("已匹配 1 份翻译与注音");
   await page.getByRole("button", { name: "导入音乐", exact: true }).click();
   await page
@@ -799,5 +806,137 @@ test("directory picker reads nested file handles and repeated folders", async ({
     .getByRole("button", { name: /^导入文件夹/ })
     .click();
   await expect(page.locator(".toast")).toContainText("已连接 1 首");
+  writeFileSync(lrc, "[00:00.00]Updated native lyrics");
+  writeFileSync(
+    enhanced,
+    enhancedLine("Updated native lyrics", "同步后的译文"),
+  );
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Handle song 更多操作", exact: true })
+    .click();
+  await page.getByRole("button", { name: "同步歌词", exact: true }).click();
+  await expect(page.locator(".toast")).toContainText("已同步歌词、翻译与注音");
+  await expect(
+    page.getByRole("dialog", { name: "同步歌词", exact: true }),
+  ).toHaveCount(0);
+  await page.locator(".track-main").click();
+  await page.locator(".mini-song").click();
+  const player = page.locator(".mobile-player");
+  await player.getByRole("button", { name: "暂停", exact: true }).click();
+  await player.getByRole("button", { name: "歌词", exact: true }).click();
+  await expect(player.locator(".lyric-original")).toHaveText(
+    "Updated native lyrics",
+  );
+  await expect(player.locator(".lyric-translation")).toHaveText("同步后的译文");
+  await player.getByRole("button", { name: "收起播放器", exact: true }).click();
+  writeFileSync(lrc, "[00:00.00]Do not apply");
+  writeFileSync(enhanced, "{");
+  await page
+    .getByRole("button", { name: "Handle song 更多操作", exact: true })
+    .click();
+  await page.getByRole("button", { name: "同步歌词", exact: true }).click();
+  await expect(page.locator(".toast")).toContainText("未修改已有歌词");
+  const saved = await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("neukarustihs-v1");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const tracks = await new Promise<{ lyrics: string }[]>(
+      (resolve, reject) => {
+        const request = db.transaction("tracks").objectStore("tracks").getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      },
+    );
+    db.close();
+    return tracks[0].lyrics;
+  });
+  expect(saved).toBe("[00:00.00]Updated native lyrics");
+  unlinkSync(lrc);
+  unlinkSync(enhanced);
+  await page
+    .getByRole("button", { name: "Handle song 更多操作", exact: true })
+    .click();
+  await page.getByRole("button", { name: "同步歌词", exact: true }).click();
+  await expect(page.locator(".toast")).toContainText("未找到同名");
+  await page.locator(".mini-song").click();
+  await player.getByRole("button", { name: "歌词", exact: true }).click();
+  await expect(player.locator(".lyric-translation")).toHaveText("同步后的译文");
+  await player.getByRole("button", { name: "收起播放器", exact: true }).click();
+  await page.evaluate(() => {
+    Object.defineProperty(
+      FileSystemDirectoryHandle.prototype,
+      "queryPermission",
+      { configurable: true, value: async () => "denied" },
+    );
+    Object.defineProperty(
+      FileSystemDirectoryHandle.prototype,
+      "requestPermission",
+      { configurable: true, value: async () => "denied" },
+    );
+  });
+  await page
+    .getByRole("button", { name: "Handle song 更多操作", exact: true })
+    .click();
+  await page.getByRole("button", { name: "同步歌词", exact: true }).click();
+  await expect(
+    page.getByRole("dialog", { name: "同步歌词", exact: true }),
+  ).toBeVisible();
+});
+
+test("lyric sync folder fallback finds only the original song's siblings", async ({
+  page,
+}) => {
+  const folder = resolve(fixtures, "Sync collection"),
+    albumA = resolve(folder, "A"),
+    albumB = resolve(folder, "B");
+  mkdirSync(albumA, { recursive: true });
+  mkdirSync(albumB, { recursive: true });
+  const target = resolve(albumA, "Same title.wav");
+  copyFileSync(first, target);
+  copyFileSync(short, resolve(albumB, "Same title.wav"));
+  writeFileSync(resolve(albumA, "Same title.lrc"), "[00:00.00]Correct song");
+  writeFileSync(
+    resolve(albumA, "Same title.lyrics.json"),
+    enhancedLine("Correct song", "正确译文"),
+  );
+  writeFileSync(
+    resolve(albumB, "Same title.lyrics.json"),
+    enhancedLine("Wrong song", "错误译文"),
+  );
+  await page.addInitScript(() =>
+    Object.defineProperty(window, "showDirectoryPicker", { value: undefined }),
+  );
+  await page.goto("./");
+  await page.getByTestId("music-input").setInputFiles(target);
   await expect(page.locator(".track-row")).toHaveCount(1);
+  await page
+    .getByRole("button", { name: "Same title 更多操作", exact: true })
+    .click();
+  await page.getByRole("button", { name: "同步歌词", exact: true }).click();
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: /选择歌曲所在文件夹/ }).click();
+  await (await chooser).setFiles(folder);
+  await expect(page.locator(".toast")).toContainText("已同步歌词、翻译与注音");
+  await expect(page.locator(".track-row")).toHaveCount(1);
+  await page.locator(".track-main").click();
+  await page.locator(".mini-song").click();
+  const player = page.locator(".mobile-player");
+  await player.getByRole("button", { name: "暂停", exact: true }).click();
+  await player.getByRole("button", { name: "歌词", exact: true }).click();
+  await expect(player.locator(".lyric-translation")).toHaveText("正确译文");
+  await player.getByRole("button", { name: "收起播放器", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Same title 更多操作", exact: true })
+    .click();
+  await page.getByRole("button", { name: "同步歌词", exact: true }).click();
+  const wrongChooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: /选择歌曲所在文件夹/ }).click();
+  await (await wrongChooser).setFiles(albumB);
+  await expect(page.locator(".toast")).toContainText("未找到这首歌");
+  await page.locator(".mini-song").click();
+  await player.getByRole("button", { name: "歌词", exact: true }).click();
+  await expect(player.locator(".lyric-translation")).toHaveText("正确译文");
 });

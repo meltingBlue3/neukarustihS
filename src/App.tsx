@@ -42,6 +42,7 @@ import {
   removeTrack,
   saveLyrics,
   saveEnhancedLyrics,
+  syncTrackLyrics,
   seek,
   setSleep,
   skip,
@@ -49,7 +50,13 @@ import {
   useMusic,
 } from "./store";
 import { formatTime, parseLrc } from "./lib";
-import type { LyricLine, MusicHandle, MusicSource, Track } from "./lib";
+import type {
+  LyricLine,
+  MusicDirectoryHandle,
+  MusicHandle,
+  Track,
+} from "./lib";
+import { readMusicFolder } from "./files";
 import { isEnhancedLyrics, readEnhancedLyrics } from "./lyrics";
 import { updateApp, checkForAppUpdate, hasAppUpdate } from "./pwa";
 import "./App.css";
@@ -491,6 +498,7 @@ function App() {
   const [playerOpen, setPlayerOpen] = useState(false),
     [queueOpen, setQueueOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [syncTarget, setSyncTarget] = useState<string | null>(null);
   const [actionTrack, setActionTrack] = useState<Track | null>(null),
     [playlistForm, setPlaylistForm] = useState<"new" | "rename" | null>(null);
   const [playlistName, setPlaylistName] = useState(""),
@@ -511,6 +519,7 @@ function App() {
     [updating, setUpdating] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null),
     folderInput = useRef<HTMLInputElement>(null),
+    syncFolderInput = useRef<HTMLInputElement>(null),
     lyricInput = useRef<HTMLInputElement>(null);
   const lyricTarget = useRef<string | null>(null);
   const currentTrack = tracks.find((t) => t.id === current),
@@ -648,42 +657,14 @@ function App() {
   }
   async function pickFolder() {
     if (importing || !ready) return;
-    type Directory = FileSystemDirectoryHandle & {
-      values: () => AsyncIterable<MusicHandle | Directory>;
-    };
     const pickerWindow = window as unknown as {
-      showDirectoryPicker?: () => Promise<Directory>;
+      showDirectoryPicker?: () => Promise<MusicDirectoryHandle>;
     };
     if (pickerWindow.showDirectoryPicker) {
       try {
         const directory = await pickerWindow.showDirectoryPicker();
         useMusic.setState({ importing: "正在读取文件夹…" });
-        const incoming: MusicSource[] = [];
-        let skipped = 0;
-        async function walk(dir: Directory, path: string) {
-          for await (const handle of dir.values()) {
-            try {
-              if (handle.kind === "directory")
-                await walk(handle as Directory, `${path}/${handle.name}`);
-              else {
-                const fileHandle = handle as MusicHandle;
-                if (
-                  /\.(mp3|flac|m4a|aac|ogg|opus|wav|webm|aiff?|lrc|lyrics\.json)$/i.test(
-                    fileHandle.name,
-                  )
-                )
-                  incoming.push({
-                    file: await fileHandle.getFile(),
-                    handle: fileHandle,
-                    relativePath: `${path}/${fileHandle.name}`,
-                  });
-              }
-            } catch {
-              skipped++;
-            }
-          }
-        }
-        await walk(directory, directory.name);
+        const { incoming, skipped } = await readMusicFolder(directory);
         useMusic.setState({ importing: "" });
         await importMusic(incoming);
         if (skipped)
@@ -699,6 +680,40 @@ function App() {
       }
     }
     folderInput.current?.click();
+  }
+  async function beginLyricSync(id: string) {
+    setActionTrack(null);
+    useMusic.getState().notify("");
+    if ((await syncTrackLyrics(id)) === "needs-folder") setSyncTarget(id);
+  }
+  async function chooseSyncFolder() {
+    if (!syncTarget || importing) return;
+    const target = syncTarget;
+    const pickerWindow = window as unknown as {
+      showDirectoryPicker?: () => Promise<MusicDirectoryHandle>;
+    };
+    if (!pickerWindow.showDirectoryPicker) {
+      syncFolderInput.current?.click();
+      return;
+    }
+    try {
+      const directory = await pickerWindow.showDirectoryPicker();
+      useMusic.setState({ importing: "正在查找同名歌词…" });
+      const { incoming, skipped } = await readMusicFolder(directory);
+      if (skipped)
+        throw new Error("部分文件无法读取，请选择歌曲直接所在的文件夹重试");
+      useMusic.setState({ importing: "" });
+      await syncTrackLyrics(target, incoming);
+      setSyncTarget(null);
+    } catch (error) {
+      if (!(error instanceof DOMException && error.name === "AbortError")) {
+        useMusic
+          .getState()
+          .notify("无法读取文件夹，请重新选择；已有歌词未修改");
+      }
+    } finally {
+      useMusic.setState({ importing: "" });
+    }
   }
   function pickLyrics(id = current) {
     if (!id) return;
@@ -779,6 +794,25 @@ function App() {
             Array.from(e.target.files || []).map((file) => ({ file })),
           );
           e.target.value = "";
+        }}
+      />
+      <input
+        ref={syncFolderInput}
+        data-testid="sync-folder-input"
+        type="file"
+        multiple
+        {...{ webkitdirectory: "" }}
+        hidden
+        onChange={async (e) => {
+          const incoming = Array.from(e.target.files || []).map((file) => ({
+            file,
+          }));
+          const target = syncTarget;
+          e.target.value = "";
+          if (target && incoming.length) {
+            setSyncTarget(null);
+            await syncTrackLyrics(target, incoming);
+          }
         }}
       />
       <input
@@ -1531,6 +1565,28 @@ function App() {
           </div>
         </Modal>
       )}
+      {syncTarget && (
+        <Modal title="同步歌词" onClose={() => setSyncTarget(null)}>
+          <p className="import-help">
+            需要访问歌曲所在的文件夹，才能查找同名 LRC
+            和增强歌词。选择后会自动匹配，只更新这首歌。
+          </p>
+          <button
+            className="import-option"
+            disabled={!!importing}
+            onClick={() => void chooseSyncFolder()}
+          >
+            <FolderOpen size={25} />
+            <span>
+              <strong>选择歌曲所在文件夹</strong>
+              <small>{importing || "自动查找歌词、中文翻译和注音"}</small>
+            </span>
+          </button>
+          <p className="import-help">
+            支持保留目录权限的浏览器会记住选择；其他浏览器每次同步需要重新选择文件夹。
+          </p>
+        </Modal>
+      )}
       {actionTrack && !confirmDelete && (
         <Modal title={actionTrack.title} onClose={() => setActionTrack(null)}>
           <div className="action-list">
@@ -1553,13 +1609,11 @@ function App() {
               加入播放队列
             </button>
             <button
-              onClick={() => {
-                pickLyrics(actionTrack.id);
-                setActionTrack(null);
-              }}
+              disabled={!!importing || !ready}
+              onClick={() => void beginLyricSync(actionTrack.id)}
             >
-              <Music2 size={19} />
-              导入歌词
+              <RefreshCw size={19} />
+              同步歌词
             </button>
             <p className="action-label">添加到歌单</p>
             {playlists.map((p) => (
