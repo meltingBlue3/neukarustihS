@@ -1,3 +1,5 @@
+import type { EnhancedLyrics, LyricSegment } from "./lyrics";
+
 export type MusicHandle = FileSystemFileHandle & {
   queryPermission: (options: { mode: "read" }) => Promise<PermissionState>;
   requestPermission: (options: { mode: "read" }) => Promise<PermissionState>;
@@ -14,6 +16,7 @@ export interface Track {
   added: number;
   cover?: Blob;
   lyrics?: string;
+  enhancedLyrics?: EnhancedLyrics;
   handle?: MusicHandle;
   sourcePath?: string;
 }
@@ -30,6 +33,8 @@ export interface Playlist {
 export interface LyricLine {
   time: number;
   text: string;
+  translation?: string;
+  segments?: LyricSegment[];
 }
 export const isAudio = (file: File) =>
   file.type.startsWith("audio/") ||

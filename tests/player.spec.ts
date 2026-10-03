@@ -2,6 +2,31 @@ import { test, expect } from "@playwright/test";
 import { writeFileSync, mkdirSync, copyFileSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parseLrc, nextTrack } from "../src/lib";
+import { parseEnhancedLyrics } from "../src/lyrics";
+
+function enhancedLine(text: string, translation: string) {
+  return JSON.stringify({
+    format: "neukarustihs-lyrics",
+    version: 1,
+    lines: [{ timeMs: 0, text, translation, segments: [{ text }] }],
+  });
+}
+
+test("enhanced lyrics validate timelines and exact ruby text before saving", () => {
+  const valid = enhancedLine("夜", "夜晚");
+  expect(parseEnhancedLyrics(`\uFEFF${valid}`).lines[0].translation).toBe(
+    "夜晚",
+  );
+  for (const invalid of [
+    "{",
+    valid.replace('"version":1', '"version":2'),
+    valid.replace('"timeMs":0', '"timeMs":-1'),
+    valid.replace('"segments":[{"text":"夜"}]', '"segments":[{"text":"朝"}]'),
+    valid.replace('"translation":"夜晚"', '"translation":{}'),
+  ]) {
+    expect(() => parseEnhancedLyrics(invalid)).toThrow();
+  }
+});
 
 const fixtures = resolve(`tests/fixtures/worker-${process.pid}`);
 mkdirSync(fixtures, { recursive: true });
@@ -138,6 +163,120 @@ test("mobile import, playback, seek, favorite, lyrics, playlist, persistence and
       .getByRole("button", { name: "暂停", exact: true }),
   ).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("enhanced lyrics import together, seek, preserve settings offline and reject bad replacements", async ({
+  page,
+  context,
+}) => {
+  const enhanced = resolve(fixtures, "Midnight Test.lyrics.json");
+  writeFileSync(
+    enhanced,
+    JSON.stringify({
+      format: "neukarustihs-lyrics",
+      version: 1,
+      lines: [
+        {
+          timeMs: 0,
+          text: "夜の歌",
+          translation: "夜晚的歌",
+          segments: [
+            { text: "夜", reading: "よる" },
+            { text: "の" },
+            { text: "歌", reading: "うた" },
+          ],
+        },
+        {
+          timeMs: 3000,
+          text: "また明日",
+          translation: "明天再见",
+          segments: [{ text: "また" }, { text: "明日", reading: "あした" }],
+        },
+        { timeMs: 8000, text: "", translation: "", segments: [] },
+      ],
+    }),
+  );
+  await page.goto("./");
+  await page.getByTestId("music-input").setInputFiles([enhanced, lyric, first]);
+  await expect(page.locator(".toast")).toContainText("已匹配 1 份翻译与注音");
+  await page.locator(".track-main").click();
+  await page.locator(".mini-song").click();
+  const player = page.locator(".mobile-player");
+  await player.getByRole("button", { name: "暂停", exact: true }).click();
+  const controls = await player.locator(".play-controls").boundingBox();
+  await player.getByRole("button", { name: "歌词", exact: true }).click();
+  await expect(player.locator("ruby rt")).toHaveText([
+    "よる",
+    "うた",
+    "あした",
+  ]);
+  await expect(player.locator(".lyric-translation")).toHaveText([
+    "夜晚的歌",
+    "明天再见",
+  ]);
+  await expect(player.locator(".lyric").last()).toHaveText("♪");
+  await player.locator(".lyric").nth(1).click();
+  await expect(player.getByRole("slider", { name: "播放进度" })).toHaveValue(
+    "3",
+  );
+  await player.getByRole("button", { name: "振り仮名", exact: true }).click();
+  await player.getByRole("button", { name: "中文翻译", exact: true }).click();
+  await expect(player.locator("ruby")).toHaveCount(0);
+  await expect(player.locator(".lyric-translation")).toHaveCount(0);
+  expect(await player.locator(".play-controls").boundingBox()).toEqual(
+    controls,
+  );
+  await page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+  });
+  await page.reload();
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+  await context.setOffline(true);
+  await page.reload();
+  await expect(page.locator(".track-row")).toHaveCount(1);
+  await page.locator(".mini-song").click();
+  await player.getByRole("button", { name: "歌词", exact: true }).click();
+  await expect(
+    player.getByRole("button", { name: "中文翻译", exact: true }),
+  ).toHaveAttribute("aria-pressed", "false");
+  await expect(
+    player.getByRole("button", { name: "振り仮名", exact: true }),
+  ).toHaveAttribute("aria-pressed", "false");
+  await player.getByRole("button", { name: "中文翻译", exact: true }).click();
+  await expect(player.locator(".lyric-translation").first()).toHaveText(
+    "夜晚的歌",
+  );
+  // Use the actual replacement action to set its target.
+  const chooserPromise = page.waitForEvent("filechooser");
+  await player.getByRole("button", { name: "更换歌词" }).click();
+  await (
+    await chooserPromise
+  ).setFiles({
+    name: "broken.lyrics.json",
+    mimeType: "application/json",
+    buffer: Buffer.from("{"),
+  });
+  await expect(page.locator(".modal-notice")).toContainText("格式不正确");
+  await expect(player.locator(".lyric-translation").first()).toHaveText(
+    "夜晚的歌",
+  );
+  await page.getByTestId("lyric-input").setInputFiles(lyric);
+  // Re-importing the same LRC preserves an existing enhancement.
+  await expect(player.locator(".lyric-translation").first()).toHaveText(
+    "夜晚的歌",
+  );
+  await page.getByTestId("lyric-input").setInputFiles({
+    name: "new.lrc",
+    mimeType: "text/plain",
+    buffer: Buffer.from("[00:00.00]Replacement lyric"),
+  });
+  await expect(player.locator(".lyric")).toHaveText("Replacement lyric");
+  await expect(player.locator(".lyrics-options")).toHaveCount(0);
+  // A sidecar can be added later, without re-importing the song or LRC.
+  await page.getByTestId("music-input").setInputFiles(enhanced);
+  await expect(player.locator(".lyric-translation").first()).toHaveText(
+    "夜晚的歌",
+  );
 });
 
 test("mobile cover and lyrics keep controls fixed and support horizontal touch swipes", async ({
@@ -510,6 +649,14 @@ test("folder fallback imports nested albums, scopes lyrics, deduplicates and rec
   copyFileSync(short, resolve(albumB, "Same title.wav"));
   writeFileSync(resolve(albumA, "Same title.lrc"), "[00:00.00]Album A lyrics");
   writeFileSync(resolve(albumB, "Same title.lrc"), "[00:00.00]Album B lyrics");
+  writeFileSync(
+    resolve(albumA, "Same title.lyrics.json"),
+    enhancedLine("Album A lyrics", "专辑甲"),
+  );
+  writeFileSync(
+    resolve(albumB, "Same title.lyrics.json"),
+    enhancedLine("Album B lyrics", "专辑乙"),
+  );
   writeFileSync(resolve(folder, "notes.txt"), "Ignore this file");
   await page.addInitScript(() =>
     Object.defineProperty(window, "showDirectoryPicker", {
@@ -536,8 +683,11 @@ test("folder fallback imports nested albums, scopes lyrics, deduplicates and rec
     .locator(".mobile-player")
     .getByRole("button", { name: "歌词", exact: true })
     .click();
-  await expect(page.locator(".mobile-player .lyric")).toHaveText(
+  await expect(page.locator(".mobile-player .lyric-original")).toHaveText(
     "Album A lyrics",
+  );
+  await expect(page.locator(".mobile-player .lyric-translation")).toHaveText(
+    "专辑甲",
   );
   await page
     .locator(".mobile-player")
@@ -567,8 +717,22 @@ test("folder fallback imports nested albums, scopes lyrics, deduplicates and rec
     .locator(".mobile-player")
     .getByRole("button", { name: "歌词", exact: true })
     .click();
-  await expect(page.locator(".mobile-player .lyric")).toHaveText(
+  await expect(page.locator(".mobile-player .lyric-original")).toHaveText(
     "Album B lyrics",
+  );
+  await expect(page.locator(".mobile-player .lyric-translation")).toHaveText(
+    "专辑乙",
+  );
+  await page.getByTestId("music-input").setInputFiles({
+    name: "Same title.lyrics.json",
+    mimeType: "application/json",
+    buffer: Buffer.from(enhancedLine("Wrong album", "不要覆盖")),
+  });
+  await expect(page.locator(".modal-notice")).toContainText(
+    "未找到唯一同名歌曲",
+  );
+  await expect(page.locator(".mobile-player .lyric-translation")).toHaveText(
+    "专辑乙",
   );
 });
 
@@ -597,6 +761,25 @@ test("directory picker reads nested file handles and repeated folders", async ({
     const text = await lrc.createWritable();
     await text.write("[00:00.00]Native folder lyrics");
     await text.close();
+    const enhanced = await nested.getFileHandle("Handle song.lyrics.json", {
+      create: true,
+    });
+    const sidecar = await enhanced.createWritable();
+    await sidecar.write(
+      JSON.stringify({
+        format: "neukarustihs-lyrics",
+        version: 1,
+        lines: [
+          {
+            timeMs: 0,
+            text: "Native folder lyrics",
+            translation: "文件夹译文",
+            segments: [{ text: "Native folder lyrics" }],
+          },
+        ],
+      }),
+    );
+    await sidecar.close();
     Object.defineProperty(window, "showDirectoryPicker", {
       configurable: true,
       value: async () => directory,
@@ -609,6 +792,7 @@ test("directory picker reads nested file handles and repeated folders", async ({
     .click();
   await expect(page.locator(".track-row")).toHaveCount(1);
   await expect(page.locator(".toast")).toContainText("已匹配 1 份歌词");
+  await expect(page.locator(".toast")).toContainText("已匹配 1 份翻译与注音");
   await page.getByRole("button", { name: "导入音乐", exact: true }).click();
   await page
     .getByRole("dialog", { name: "导入音乐" })

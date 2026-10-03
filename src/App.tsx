@@ -41,6 +41,7 @@ import {
   play,
   removeTrack,
   saveLyrics,
+  saveEnhancedLyrics,
   seek,
   setSleep,
   skip,
@@ -48,7 +49,8 @@ import {
   useMusic,
 } from "./store";
 import { formatTime, parseLrc } from "./lib";
-import type { MusicHandle, MusicSource, Track } from "./lib";
+import type { LyricLine, MusicHandle, MusicSource, Track } from "./lib";
+import { isEnhancedLyrics, readEnhancedLyrics } from "./lyrics";
 import { updateApp, checkForAppUpdate, hasAppUpdate } from "./pwa";
 import "./App.css";
 
@@ -185,7 +187,24 @@ function Progress() {
 }
 function Lyrics({ track, onImport }: { track?: Track; onImport: () => void }) {
   const position = useMusic((s) => s.position);
-  const lines = useMemo(() => parseLrc(track?.lyrics || ""), [track?.lyrics]);
+  const showTranslation = useMusic((s) => s.showTranslation);
+  const showFurigana = useMusic((s) => s.showFurigana);
+  const lyrics = track?.lyrics;
+  const enhancedLyrics = track?.enhancedLyrics;
+  const lines = useMemo<LyricLine[]>(
+    () =>
+      enhancedLyrics
+        ? enhancedLyrics.lines.map((line) => ({
+            ...line,
+            time: line.timeMs / 1000,
+          }))
+        : parseLrc(lyrics || ""),
+    [lyrics, enhancedLyrics],
+  );
+  const hasTranslation = lines.some((line) => !!line.translation);
+  const hasFurigana = lines.some((line) =>
+    line.segments?.some((segment) => !!segment.reading),
+  );
   const active = lines.findLastIndex((line) => line.time <= position);
   const activeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -195,14 +214,14 @@ function Lyrics({ track, onImport }: { track?: Track; onImport: () => void }) {
         : "smooth",
       block: "center",
     });
-  }, [active]);
-  if (!track?.lyrics)
+  }, [active, track?.id, lines, showTranslation, showFurigana]);
+  if (!track?.lyrics && !track?.enhancedLyrics)
     return (
       <div className="lyrics-empty">
         <Music2 size={36} />
         <h3>让文字也跟着播放</h3>
         <p>
-          导入这首歌的 LRC 歌词，
+          导入 LRC 或歌词增强文件，
           <br />
           跟随每一句，留在这一刻。
         </p>
@@ -213,24 +232,70 @@ function Lyrics({ track, onImport }: { track?: Track; onImport: () => void }) {
       </div>
     );
   return (
-    <div className="lyrics-scroll">
-      {lines.length ? (
-        lines.map((line, i) => (
-          <button
-            ref={i === active ? activeRef : undefined}
-            className={i === active ? "lyric active" : "lyric"}
-            key={`${line.time}-${i}`}
-            onClick={() => seek(line.time)}
-          >
-            {line.text}
-          </button>
-        ))
-      ) : (
-        <p className="plain-lyrics">{track.lyrics}</p>
+    <div className="lyrics-view">
+      {(hasTranslation || hasFurigana) && (
+        <div className="lyrics-options" aria-label="歌词显示">
+          {hasFurigana && (
+            <button
+              type="button"
+              aria-pressed={showFurigana}
+              onClick={() => useMusic.setState({ showFurigana: !showFurigana })}
+            >
+              振り仮名
+            </button>
+          )}
+          {hasTranslation && (
+            <button
+              type="button"
+              aria-pressed={showTranslation}
+              onClick={() =>
+                useMusic.setState({ showTranslation: !showTranslation })
+              }
+            >
+              中文翻译
+            </button>
+          )}
+        </div>
       )}
-      <button className="text-button" onClick={onImport}>
-        更换歌词
-      </button>
+      <div className="lyrics-scroll">
+        {lines.length ? (
+          lines.map((line, i) => (
+            <button
+              ref={i === active ? activeRef : undefined}
+              className={i === active ? "lyric active" : "lyric"}
+              key={`${line.time}-${i}`}
+              onClick={() => seek(line.time)}
+            >
+              <span
+                className={`lyric-original${showFurigana && line.segments?.some((s) => s.reading) ? " with-ruby" : ""}`}
+              >
+                {showFurigana && line.segments && line.text
+                  ? line.segments.map((segment, index) =>
+                      segment.reading ? (
+                        <ruby key={index}>
+                          {segment.text}
+                          <rp>（</rp>
+                          <rt>{segment.reading}</rt>
+                          <rp>）</rp>
+                        </ruby>
+                      ) : (
+                        <span key={index}>{segment.text}</span>
+                      ),
+                    )
+                  : line.text || "♪"}
+              </span>
+              {showTranslation && line.translation && (
+                <span className="lyric-translation">{line.translation}</span>
+              )}
+            </button>
+          ))
+        ) : (
+          <p className="plain-lyrics">{track.lyrics}</p>
+        )}
+        <button className="text-button" onClick={onImport}>
+          更换歌词
+        </button>
+      </div>
     </div>
   );
 }
@@ -548,6 +613,7 @@ function App() {
                   ".aiff",
                 ],
                 "text/plain": [".lrc"],
+                "application/json": [".json"],
               },
             },
           ],
@@ -589,7 +655,7 @@ function App() {
               else {
                 const fileHandle = handle as MusicHandle;
                 if (
-                  /\.(mp3|flac|m4a|aac|ogg|opus|wav|webm|aiff?|lrc)$/i.test(
+                  /\.(mp3|flac|m4a|aac|ogg|opus|wav|webm|aiff?|lrc|lyrics\.json)$/i.test(
                     fileHandle.name,
                   )
                 )
@@ -679,7 +745,7 @@ function App() {
         data-testid="music-input"
         type="file"
         multiple
-        accept="audio/*,.flac,.m4a,.opus,.lrc"
+        accept="audio/*,.flac,.m4a,.opus,.lrc,.json"
         hidden
         onChange={(e) => {
           void importMusic(
@@ -706,17 +772,35 @@ function App() {
         ref={lyricInput}
         data-testid="lyric-input"
         type="file"
-        accept=".lrc,text/plain"
+        accept=".lrc,.txt,.json,text/plain,application/json"
         hidden
         onChange={async (e) => {
           const file = e.target.files?.[0];
           e.target.value = "";
           if (file && lyricTarget.current) {
             try {
-              await saveLyrics(lyricTarget.current, await file.text());
+              if (isEnhancedLyrics(file.name)) {
+                await saveEnhancedLyrics(
+                  lyricTarget.current,
+                  await readEnhancedLyrics(file),
+                );
+              } else if (/\.(lrc|txt)$/i.test(file.name)) {
+                await saveLyrics(lyricTarget.current, await file.text());
+              } else {
+                useMusic
+                  .getState()
+                  .notify("请选择 LRC、TXT 或 .lyrics.json 歌词增强文件");
+                return;
+              }
               useMusic.getState().notify("歌词已保存");
-            } catch {
-              useMusic.getState().notify("歌词保存失败，请重试");
+            } catch (error) {
+              useMusic
+                .getState()
+                .notify(
+                  error instanceof Error
+                    ? error.message
+                    : "歌词保存失败，请重试",
+                );
             }
           }
         }}
@@ -1318,7 +1402,7 @@ function App() {
               <Music2 size={25} />
               <span>
                 <strong>选择音乐文件</strong>
-                <small>也可以一次选择多首歌曲</small>
+                <small>多选歌曲、同名 LRC 和翻译注音文件</small>
               </span>
             </button>
           </div>
@@ -1326,7 +1410,7 @@ function App() {
             音乐在几个文件夹里？可以逐个添加，已导入的歌曲不会重复出现。重新选择原文件夹也能连接已有音乐。
           </p>
           <p className="import-help">
-            如果设备的选择器不支持文件夹，请使用「选择音乐文件」多选导入。
+            「夜曲.mp3」「夜曲.lrc」和「夜曲.lyrics.json」可一起导入，自动匹配歌词、中文翻译与注音。也可以之后补充导入。
           </p>
         </Modal>
       )}
@@ -1462,7 +1546,7 @@ function App() {
               }}
             >
               <Music2 size={19} />
-              导入 LRC 歌词
+              导入歌词
             </button>
             <p className="action-label">添加到歌单</p>
             {playlists.map((p) => (

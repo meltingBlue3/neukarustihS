@@ -3,6 +3,8 @@ import { persist } from "zustand/middleware";
 import { set, del, values, createStore } from "idb-keyval";
 import { fileId, isAudio, nextTrack } from "./lib";
 import type { Track, Playlist, MusicSource } from "./lib";
+import { isEnhancedLyrics, readEnhancedLyrics } from "./lyrics";
+import type { EnhancedLyrics } from "./lyrics";
 
 const database = createStore("neukarustihs-v1", "tracks");
 const files = new Map<string, File>();
@@ -23,6 +25,8 @@ interface State {
   duration: number;
   volume: number;
   playbackMode: "all" | "one" | "shuffle";
+  showTranslation: boolean;
+  showFurigana: boolean;
   history: string[];
   ready: boolean;
   importing: string;
@@ -52,6 +56,8 @@ export const useMusic = create<State>()(
       duration: 0,
       volume: 0.8,
       playbackMode: "all",
+      showTranslation: true,
+      showFurigana: true,
       history: [],
       ready: false,
       importing: "",
@@ -139,6 +145,8 @@ export const useMusic = create<State>()(
         favorites: s.favorites,
         volume: s.volume,
         playbackMode: s.playbackMode,
+        showTranslation: s.showTranslation,
+        showFurigana: s.showFurigana,
         current: s.current,
         queue: s.queue,
       }),
@@ -173,8 +181,9 @@ export async function importMusic(incoming: MusicSource[]) {
   if (useMusic.getState().importing) return;
   const music = incoming.filter((x) => isAudio(x.file));
   const lyrics = incoming.filter((x) => /\.lrc$/i.test(x.file.name));
-  if (!music.length && !lyrics.length) {
-    useMusic.getState().notify("请选择 MP3、FLAC、M4A、WAV、OGG 或 LRC 文件");
+  const enhanced = incoming.filter((x) => isEnhancedLyrics(x.file.name));
+  if (!music.length && !lyrics.length && !enhanced.length) {
+    useMusic.getState().notify("请选择音乐、LRC 或 .lyrics.json 歌词增强文件");
     return;
   }
   let added = 0,
@@ -262,6 +271,39 @@ export async function importMusic(incoming: MusicSource[]) {
         matched++;
       }
     }
+    let enhancedMatched = 0,
+      enhancedFailed = 0,
+      enhancedUnmatched = 0;
+    const selectedIds = new Set(music.map(({ file }) => fileId(file)));
+    for (const { file, relativePath } of enhanced) {
+      try {
+        const data = await readEnhancedLyrics(file);
+        const lyricPath = relativePath || file.webkitRelativePath;
+        const stem = file.name.replace(/\.lyrics\.json$/i, "").toLowerCase();
+        const candidates = useMusic
+          .getState()
+          .tracks.filter((t) =>
+            lyricPath
+              ? t.sourcePath?.replace(/\.[^/.]+$/, "").toLowerCase() ===
+                lyricPath.replace(/\.lyrics\.json$/i, "").toLowerCase()
+              : t.name.replace(/\.[^.]+$/, "").toLowerCase() === stem,
+          );
+        const selected = candidates.filter((t) => selectedIds.has(t.id));
+        const matches = !lyricPath && selected.length ? selected : candidates;
+        // A lone sidecar cannot identify which of several same-named tracks
+        // it belongs to. The track's own import action can resolve that case.
+        if (!matches.length || (!lyricPath && matches.length > 1)) {
+          enhancedUnmatched++;
+          continue;
+        }
+        for (const track of matches) {
+          await saveEnhancedLyrics(track.id, data);
+          enhancedMatched++;
+        }
+      } catch {
+        enhancedFailed++;
+      }
+    }
     useMusic
       .getState()
       .notify(
@@ -269,6 +311,11 @@ export async function importMusic(incoming: MusicSource[]) {
           added && `已导入 ${added} 首`,
           reconnected && `已连接 ${reconnected} 首`,
           matched && `已匹配 ${matched} 份歌词`,
+          enhancedMatched && `已匹配 ${enhancedMatched} 份翻译与注音`,
+          enhancedUnmatched &&
+            `${enhancedUnmatched} 份增强歌词未找到唯一同名歌曲，请在对应歌曲的歌词页导入`,
+          enhancedFailed &&
+            `${enhancedFailed} 份增强歌词读取或保存失败，请检查文件格式（版本 1，最大 2 MB）`,
           lyrics.length && !matched && "未找到同名歌曲，请在歌词页单独导入",
           failed && "部分歌曲未能保存，下次需重新导入",
         ]
@@ -285,7 +332,24 @@ export async function importMusic(incoming: MusicSource[]) {
 export async function saveLyrics(id: string, lyrics: string) {
   const track = useMusic.getState().tracks.find((t) => t.id === id);
   if (!track) return;
-  const updated = { ...track, lyrics };
+  const updated = {
+    ...track,
+    lyrics,
+    enhancedLyrics: lyrics === track.lyrics ? track.enhancedLyrics : undefined,
+  };
+  await set(id, updated, database);
+  useMusic.setState((s) => ({
+    tracks: s.tracks.map((t) => (t.id === id ? updated : t)),
+  }));
+}
+
+export async function saveEnhancedLyrics(
+  id: string,
+  enhancedLyrics: EnhancedLyrics,
+) {
+  const track = useMusic.getState().tracks.find((t) => t.id === id);
+  if (!track) return;
+  const updated = { ...track, enhancedLyrics };
   await set(id, updated, database);
   useMusic.setState((s) => ({
     tracks: s.tracks.map((t) => (t.id === id ? updated : t)),
