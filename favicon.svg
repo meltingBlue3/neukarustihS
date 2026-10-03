@@ -2,9 +2,9 @@
   <defs>
     <clipPath id="tile"><rect width="1024" height="1024" rx="224"/></clipPath>
     <radialGradient id="bg" cx="70%" cy="22%" r="100%">
-      <stop offset="0" stop-color="#242a3d"/>
-      <stop offset="0.5" stop-color="#151925"/>
-      <stop offset="1" stop-color="#0c0d12"/>
+      <stop offset="0" stop-color="#313d70"/>
+      <stop offset="0.5" stop-color="#1e2549"/>
+      <stop offset="1" stop-color="#12162c"/>
     </radialGradient>
     <radialGradient id="moon" cx="70%" cy="25%" r="85%">
       <stop offset="0" stop-color="#ecfca0"/>
@@ -27,6 +27,9 @@
     <filter id="glow" x="-60%" y="-60%" width="220%" height="220%">
       <feGaussianBlur stdDeviation="46"/>
     </filter>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="22"/>
+    </filter>
   </defs>
   <!-- scripts/generate-icons.mjs drops this clip to get the full-bleed icon -->
   <g clip-path="url(#tile)">
@@ -35,6 +38,7 @@
     <circle cx="552" cy="472" r="252" fill="#d8f26a" opacity="0.35" filter="url(#glow)"/>
     <circle cx="552" cy="472" r="252" fill="url(#moon)"/>
     <!-- record eclipsing the moon -->
+    <circle cx="478" cy="556" r="252" fill="#05060a" opacity="0.7" filter="url(#shadow)"/>
     <circle cx="490" cy="534" r="252" fill="url(#disc)"/>
     <g clip-path="url(#disc-clip)" fill="none" stroke="#fff">
       <circle cx="490" cy="534" r="226" stroke-opacity="0.06" stroke-width="3"/>
@@ -45,7 +49,7 @@
       <path d="M490 534 L700 330 A292 292 0 0 1 760 420 Z" fill="url(#sheen)" stroke="none"/>
       <path d="M490 534 L280 738 A292 292 0 0 1 220 648 Z" fill="url(#sheen)" stroke="none"/>
     </g>
-    <circle cx="490" cy="534" r="251" fill="none" stroke="#fff" stroke-opacity="0.07" stroke-width="2"/>
+    <circle cx="490" cy="534" r="250" fill="none" stroke="#c9d1ec" stroke-opacity="0.11" stroke-width="4"/>
     <circle cx="490" cy="534" r="250" fill="none" stroke="url(#rim)" stroke-width="4"/>
     <!-- label -->
     <circle cx="490" cy="534" r="72" fill="#d8f26a"/>
