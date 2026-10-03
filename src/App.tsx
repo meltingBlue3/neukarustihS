@@ -201,10 +201,6 @@ function Lyrics({ track, onImport }: { track?: Track; onImport: () => void }) {
         : parseLrc(lyrics || ""),
     [lyrics, enhancedLyrics],
   );
-  const hasTranslation = lines.some((line) => !!line.translation);
-  const hasFurigana = lines.some((line) =>
-    line.segments?.some((segment) => !!segment.reading),
-  );
   const active = lines.findLastIndex((line) => line.time <= position);
   const activeRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -233,30 +229,6 @@ function Lyrics({ track, onImport }: { track?: Track; onImport: () => void }) {
     );
   return (
     <div className="lyrics-view">
-      {(hasTranslation || hasFurigana) && (
-        <div className="lyrics-options" aria-label="歌词显示">
-          {hasFurigana && (
-            <button
-              type="button"
-              aria-pressed={showFurigana}
-              onClick={() => useMusic.setState({ showFurigana: !showFurigana })}
-            >
-              振り仮名
-            </button>
-          )}
-          {hasTranslation && (
-            <button
-              type="button"
-              aria-pressed={showTranslation}
-              onClick={() =>
-                useMusic.setState({ showTranslation: !showTranslation })
-              }
-            >
-              中文翻译
-            </button>
-          )}
-        </div>
-      )}
       <div className="lyrics-scroll">
         {lines.length ? (
           lines.map((line, i) => (
@@ -296,6 +268,44 @@ function Lyrics({ track, onImport }: { track?: Track; onImport: () => void }) {
           更换歌词
         </button>
       </div>
+    </div>
+  );
+}
+function LyricsOptions({ track }: { track?: Track }) {
+  const showTranslation = useMusic((s) => s.showTranslation);
+  const showFurigana = useMusic((s) => s.showFurigana);
+  const lines = track?.enhancedLyrics?.lines;
+  const hasTranslation = lines?.some((line) => !!line.translation);
+  const hasFurigana = lines?.some((line) =>
+    line.segments.some((segment) => !!segment.reading),
+  );
+  if (!hasTranslation && !hasFurigana) return null;
+  return (
+    <div className="lyrics-options" aria-label="歌词显示">
+      {hasFurigana && (
+        <button
+          type="button"
+          aria-label="振り仮名"
+          title="振り仮名"
+          aria-pressed={showFurigana}
+          onClick={() => useMusic.setState({ showFurigana: !showFurigana })}
+        >
+          注音
+        </button>
+      )}
+      {hasTranslation && (
+        <button
+          type="button"
+          aria-label="中文翻译"
+          title="中文翻译"
+          aria-pressed={showTranslation}
+          onClick={() =>
+            useMusic.setState({ showTranslation: !showTranslation })
+          }
+        >
+          译文
+        </button>
+      )}
     </div>
   );
 }
@@ -397,27 +407,30 @@ function Player({
         )}
       </div>
       <div className="song-heading">
-        <div>
+        <div className="song-info">
           <span className="eyebrow accent">
             {track ? track.album : "YOUR OWN LITTLE UNIVERSE"}
           </span>
           <h2>{track?.title || "夜晚，留给喜欢的歌。"}</h2>
           <p>{track?.artist || "导入音乐，开启你的私人频道"}</p>
         </div>
-        <IconButton
-          label={
-            current && favorites.includes(current) ? "取消收藏" : "收藏歌曲"
-          }
-          active={!!current && favorites.includes(current)}
-          disabled={!current}
-          onClick={() => current && toggleFavorite(current)}
-        >
-          <Heart
-            fill={
-              current && favorites.includes(current) ? "currentColor" : "none"
+        <div className="song-actions">
+          <LyricsOptions track={track} />
+          <IconButton
+            label={
+              current && favorites.includes(current) ? "取消收藏" : "收藏歌曲"
             }
-          />
-        </IconButton>
+            active={!!current && favorites.includes(current)}
+            disabled={!current}
+            onClick={() => current && toggleFavorite(current)}
+          >
+            <Heart
+              fill={
+                current && favorites.includes(current) ? "currentColor" : "none"
+              }
+            />
+          </IconButton>
+        </div>
       </div>
       <Progress />
       <div className="play-controls">

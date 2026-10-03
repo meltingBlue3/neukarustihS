@@ -770,6 +770,15 @@ select {
 .song-heading > div {
   min-width: 0;
 }
+.song-info {
+  flex: 1;
+}
+.song-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 4px;
+}
 .song-heading .eyebrow {
   font-size: 8px;
   letter-spacing: 1.5px;
@@ -795,12 +804,12 @@ select {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.song-heading > .icon-button {
+.song-actions > .icon-button {
   align-self: center;
   width: 35px;
   min-width: 35px;
 }
-.song-heading > .icon-button svg {
+.song-actions > .icon-button svg {
   width: 21px;
 }
 .progress {
@@ -909,22 +918,24 @@ select {
 }
 .lyrics-options {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 2px;
   flex-shrink: 0;
-  padding: 0 10px 8px;
 }
 .lyrics-options button {
+  min-width: 34px;
   min-height: 36px;
-  padding: 6px 12px;
-  border: 1px solid #34394c;
-  border-radius: 18px;
-  font-size: 12px;
-  color: #a0a7bd;
+  padding: 6px 2px;
+  font-size: 11px;
+  font-weight: 400;
+  color: #70788d;
 }
 .lyrics-options button[aria-pressed="true"] {
-  color: var(--lime);
-  border-color: #687840;
-  background: #dfff790a;
+  color: #a0a7b8;
+  text-decoration: underline;
+  text-decoration-color: #626b80;
+  text-underline-offset: 5px;
+  text-decoration-thickness: 1px;
 }
 .lyrics-scroll {
   flex: 1;
