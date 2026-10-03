@@ -679,8 +679,7 @@ function App() {
         data-testid="music-input"
         type="file"
         multiple
-        // Leave the mobile picker unfiltered: LRC often has no recognized MIME
-        // type. importMusic filters supported audio and lyrics after selection.
+        accept="audio/*,.flac,.m4a,.opus,.lrc"
         hidden
         onChange={(e) => {
           void importMusic(
@@ -1318,8 +1317,8 @@ function App() {
             >
               <Music2 size={25} />
               <span>
-                <strong>选择歌曲和歌词</strong>
-                <small>可同时多选歌曲与同名 LRC，自动匹配</small>
+                <strong>选择音乐文件</strong>
+                <small>也可以一次选择多首歌曲</small>
               </span>
             </button>
           </div>
@@ -1327,7 +1326,7 @@ function App() {
             音乐在几个文件夹里？可以逐个添加，已导入的歌曲不会重复出现。重新选择原文件夹也能连接已有音乐。
           </p>
           <p className="import-help">
-            例如「夜曲.mp3」与「夜曲.lrc」可一起选中导入；其他类型的文件会自动忽略。
+            如果设备的选择器不支持文件夹，请使用「选择音乐文件」多选导入。
           </p>
         </Modal>
       )}
