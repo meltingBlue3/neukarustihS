@@ -54,6 +54,10 @@ test("mobile import, playback, seek, favorite, lyrics, playlist, persistence and
 }) => {
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(e.message));
+  // Exercise the input-based picker used on phones, without the desktop API.
+  await page.addInitScript(() => {
+    Object.defineProperty(window, "showOpenFilePicker", { value: undefined });
+  });
   await page.goto("./");
   await expect(
     page.getByRole("button", { name: "导入音乐", exact: true }),
@@ -62,9 +66,17 @@ test("mobile import, playback, seek, favorite, lyrics, playlist, persistence and
     path: "test-results/mobile-empty.png",
     fullPage: true,
   });
-  await page.getByTestId("music-input").setInputFiles([first, second, lyric]);
+  await page.getByRole("button", { name: "导入音乐", exact: true }).click();
+  const chooserPromise = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: /选择歌曲和歌词/ }).click();
+  const chooser = await chooserPromise;
+  expect(chooser.isMultiple()).toBe(true);
+  expect(await chooser.element().getAttribute("accept")).toBeNull();
+  // LRC is deliberately first: matching must not depend on selection order.
+  await chooser.setFiles([lyric, first, second]);
   await expect(page.locator(".track-row")).toHaveCount(2);
   await expect(page.locator(".toast")).toContainText("已导入 2 首");
+  await expect(page.locator(".toast")).toContainText("已匹配 1 份歌词");
   await page
     .getByRole("main")
     .getByRole("button", {
