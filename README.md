@@ -102,7 +102,7 @@ npm run deploy
 
 源代码与每次迭代提交保存在 GitHub 的 `main` 分支，GitHub Pages 的构建产物维护在 `gh-pages`。`v1.0.0` 标记最初的稳定基线；后续版本使用 Git 标签和 [CHANGELOG.md](CHANGELOG.md) 记录，可以定位并恢复指定发布。应用内版本号由 `package.json` 在构建时注入。
 
-应用图标的源文件是 `public/favicon.svg`，修改后运行 `npm run icons` 生成普通与 Android 自适应安装图标。
+应用图标的源文件是 `public/favicon.svg`，修改后运行 `npm run icons` 生成普通、Android 自适应与 iOS 主屏幕图标。
 
 ## 代码结构
 
