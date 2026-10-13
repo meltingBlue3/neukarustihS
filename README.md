@@ -84,7 +84,13 @@ npx playwright install chrome
 npm test
 ```
 
-测试默认使用 Google Chrome 正式版（已安装则无需再次安装），可用 `PLAYWRIGHT_CHANNEL` 环境变量指定其他 Playwright 浏览器通道。测试使用生成的短 WAV 音频和真实临时目录，验证实际播放、歌词跳转、收藏和歌单、重连、队列、自动切歌、移动布局、离线导入与目录权限恢复。测试音频和截图不会提交。
+测试默认使用 Google Chrome 正式版（已安装则无需再次安装），可用 `PLAYWRIGHT_CHANNEL` 环境变量指定其他 Playwright 浏览器通道。测试使用生成的短 WAV 音频和真实临时目录，验证实际播放、歌词跳转、收藏和歌单、重连、队列、自动切歌、移动布局、离线导入与目录权限恢复。测试音频和截图不会提交。`tests/logic.spec.ts` 中的纯逻辑测试直接在 Node 中运行，无需浏览器。
+
+### 代码结构
+
+- `src/music/`：与界面无关的音乐逻辑。`store.ts` 是共享状态与本机偏好；`library.ts` 负责导入、IndexedDB 存储与歌词同步；`playback.ts` 管理唯一的音频元素、播放队列、睡眠定时和系统媒体控制；`files.ts` 处理文件选择、目录读取与授权，`sidecars.ts` 匹配同名歌词文件；`lyrics.ts` 与 `queue.ts` 是可单独测试的纯逻辑。
+- `src/ui/`：React 界面。`state.ts` 记录当前页面、排序和对话框栈：从对话框中打开的对话框叠在上层，关闭后回到下层。`ImportProvider.tsx` 统一处理系统文件选择器和备用的文件输入框；组件按区域放在 `pages/`、`player/`、`dialogs/`、`layout/`。
+- `src/pwa.ts` 负责安装提示与版本更新，`src/notice.ts` 负责全局提示。
 
 ## 发布 GitHub Pages
 

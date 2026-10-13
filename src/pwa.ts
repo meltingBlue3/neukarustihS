@@ -1,52 +1,95 @@
+// Installation and updates. Listeners start at load, before any page that
+// shows them, because the browser announces both only once.
+import { create } from "zustand";
 import { registerSW } from "virtual:pwa-register";
-let available = false;
-export const hasAppUpdate = () => available;
-function announceUpdate() {
-  available = true;
-  window.dispatchEvent(new Event("app-update"));
-}
+import { notify } from "./notice";
+
+type InstallEvent = Event & {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: string }>;
+};
+
+export const usePwa = create(() => ({
+  updateReady: false,
+  installPrompt: null as InstallEvent | null,
+  installed:
+    matchMedia("(display-mode: standalone)").matches ||
+    !!(navigator as Navigator & { standalone?: boolean }).standalone,
+}));
+
 registerSW({
   // Reload only after the user accepts and the new worker has activated.
   onNeedReload() {},
   onNeedRefresh() {
-    announceUpdate();
-  },
-  onOfflineReady() {
-    window.dispatchEvent(new Event("app-offline-ready"));
+    usePwa.setState({ updateReady: true });
   },
 });
+window.addEventListener("beforeinstallprompt", (event) => {
+  event.preventDefault();
+  usePwa.setState({ installPrompt: event as InstallEvent });
+});
+window.addEventListener("appinstalled", () => {
+  usePwa.setState({ installPrompt: null, installed: true });
+  notify("已安装，主屏幕见。");
+});
 
-export async function updateApp(reloadPage = true) {
+export async function installApp() {
+  const prompt = usePwa.getState().installPrompt;
+  if (!prompt) {
+    notify(
+      "在 Android Chrome 菜单中选择「添加到主屏幕」或「安装应用」。iPhone 请用 Safari 的分享菜单添加到主屏幕。",
+    );
+    return;
+  }
+  await prompt.prompt();
+  await prompt.userChoice;
+  usePwa.setState({ installPrompt: null });
+}
+
+// Resolve once the worker reaches one of `done`, or reject if it is discarded.
+function waitForWorker(
+  worker: ServiceWorker,
+  done: ServiceWorkerState[],
+  failure: string,
+) {
+  return new Promise<void>((resolve, reject) => {
+    const finish = (error?: Error) => {
+      clearTimeout(timeout);
+      worker.removeEventListener("statechange", changed);
+      if (error) reject(error);
+      else resolve();
+    };
+    const changed = () => {
+      if (done.includes(worker.state)) finish();
+      else if (worker.state === "redundant") finish(new Error(failure));
+    };
+    const timeout = setTimeout(
+      () => finish(new Error(`${failure}: timed out`)),
+      20000,
+    );
+    worker.addEventListener("statechange", changed);
+    changed();
+  });
+}
+
+export async function updateApp() {
   const registration = await navigator.serviceWorker.getRegistration(
     import.meta.env.BASE_URL,
   );
   if (!registration) throw new Error("Update service unavailable");
   const worker = registration.waiting;
   if (worker) {
-    await new Promise<void>((resolve, reject) => {
-      const finish = (error?: Error) => {
-        clearTimeout(timeout);
-        worker.removeEventListener("statechange", changed);
-        if (error) reject(error);
-        else resolve();
-      };
-      const changed = () => {
-        if (worker.state === "activated") finish();
-        else if (worker.state === "redundant")
-          finish(new Error("Update activation failed"));
-      };
-      const timeout = setTimeout(
-        () => finish(new Error("Update activation timed out")),
-        20000,
-      );
-      worker.addEventListener("statechange", changed);
-      worker.postMessage({ type: "SKIP_WAITING" });
-      changed();
-    });
+    const activated = waitForWorker(
+      worker,
+      ["activated"],
+      "Update activation failed",
+    );
+    worker.postMessage({ type: "SKIP_WAITING" });
+    await activated;
   } else if (registration.installing) {
     throw new Error("Update is still installing");
   }
-  if (reloadPage) window.location.reload();
+  window.location.reload();
 }
 
 export async function checkForAppUpdate() {
@@ -58,30 +101,14 @@ export async function checkForAppUpdate() {
   if (!registration) return "unavailable";
   await registration.update();
   const worker = registration.installing;
-  if (worker) {
-    await new Promise<void>((resolve, reject) => {
-      const finish = (error?: Error) => {
-        clearTimeout(timeout);
-        worker.removeEventListener("statechange", changed);
-        if (error) reject(error);
-        else resolve();
-      };
-      const changed = () => {
-        if (worker.state === "installed" || worker.state === "activated")
-          finish();
-        else if (worker.state === "redundant")
-          finish(new Error("Update installation failed"));
-      };
-      const timeout = setTimeout(
-        () => finish(new Error("Update check timed out")),
-        20000,
-      );
-      worker.addEventListener("statechange", changed);
-      changed();
-    });
-  }
-  if (registration.waiting || available) {
-    announceUpdate();
+  if (worker)
+    await waitForWorker(
+      worker,
+      ["installed", "activated"],
+      "Update installation failed",
+    );
+  if (registration.waiting || usePwa.getState().updateReady) {
+    usePwa.setState({ updateReady: true });
     return "available";
   }
   return "latest";

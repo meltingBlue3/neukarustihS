@@ -1,13 +1,10 @@
 // Pure logic, run in Node without a browser.
 import { test, expect } from "@playwright/test";
-import { parseLrc, nextTrack } from "../src/lib";
-import type { Track } from "../src/lib";
-import { parseEnhancedLyrics } from "../src/lyrics";
-import {
-  ensureReadPermission,
-  findSidecarTrack,
-  lyricFileKind,
-} from "../src/files";
+import { ensureReadPermission } from "../src/music/files";
+import { parseEnhancedLyrics, parseLrc } from "../src/music/lyrics";
+import { chooseSkip, nextTrack } from "../src/music/queue";
+import { findSidecarTrack, lyricFileKind } from "../src/music/sidecars";
+import type { Track } from "../src/music/types";
 
 function enhancedLine(text: string, translation: string) {
   return JSON.stringify({
@@ -102,4 +99,30 @@ test("lyric sidecars match exactly one song by folder or name, ignoring case", (
   expect(lyricFileKind("Song.MP3", "song.Lyrics.JSON")).toBe("enhanced");
   expect(lyricFileKind("Song.MP3", "SONG.lrc")).toBe("lrc");
   expect(lyricFileKind("Song.MP3", "Song.lrc.bak")).toBeNull();
+});
+
+test("shuffle plays every queued track once, then steps back through history", () => {
+  const state = {
+    queue: ["a", "b", "c"],
+    current: "a",
+    history: [] as string[],
+    playbackMode: "shuffle" as const,
+  };
+  const first = () => 0;
+  expect(chooseSkip(state, 1, first)).toEqual({ target: "b", history: [] });
+  // "b" already played: only "c" is left.
+  expect(chooseSkip({ ...state, history: ["b"] }, 1, first).target).toBe("c");
+  // Everything played: start a new round, still never the current track.
+  expect(
+    chooseSkip({ ...state, current: "c", history: ["a", "b"] }, 1, first),
+  ).toEqual({ target: "a", history: [] });
+  expect(chooseSkip({ ...state, history: ["c", "b"] }, -1)).toEqual({
+    target: "b",
+    history: ["c"],
+    fromHistory: true,
+  });
+  // Other modes wrap around the queue in both directions.
+  const list = { ...state, playbackMode: "all" as const };
+  expect(chooseSkip({ ...list, current: "c" }, 1).target).toBe("a");
+  expect(chooseSkip(list, -1).target).toBe("c");
 });

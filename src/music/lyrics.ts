@@ -16,6 +16,38 @@ export interface EnhancedLyrics {
   lines: EnhancedLyricLine[];
 }
 
+// One displayed line, from either an LRC or an enhanced lyrics file.
+export interface LyricLine {
+  time: number;
+  text: string;
+  translation?: string;
+  segments?: LyricSegment[];
+}
+
+export function parseLrc(text: string): LyricLine[] {
+  const offset = Number(text.match(/\[offset:\s*(-?\d+)\]/i)?.[1] ?? 0) / 1000;
+  const result: LyricLine[] = [];
+  for (const line of text.split(/\r?\n/)) {
+    const stamps = [...line.matchAll(/\[(\d+):(\d+(?:\.\d+)?)\]/g)];
+    const content = line.replace(/\[[^\]]*\]/g, "").trim();
+    for (const stamp of stamps)
+      result.push({
+        time: Math.max(0, Number(stamp[1]) * 60 + Number(stamp[2]) + offset),
+        text: content || "♪",
+      });
+  }
+  return result.sort((a, b) => a.time - b.time);
+}
+
+// Enhanced lyrics take precedence: they carry the full timeline themselves.
+export const lyricLines = (
+  lyrics?: string,
+  enhanced?: EnhancedLyrics,
+): LyricLine[] =>
+  enhanced
+    ? enhanced.lines.map((line) => ({ ...line, time: line.timeMs / 1000 }))
+    : parseLrc(lyrics || "");
+
 export const isEnhancedLyrics = (name: string) => /\.lyrics\.json$/i.test(name);
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);

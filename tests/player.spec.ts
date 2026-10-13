@@ -1,13 +1,8 @@
 import { test, expect } from "@playwright/test";
 import type { Page } from "@playwright/test";
-import {
-  writeFileSync,
-  mkdirSync,
-  copyFileSync,
-  unlinkSync,
-} from "node:fs";
+import { writeFileSync, mkdirSync, copyFileSync, unlinkSync } from "node:fs";
 import { resolve } from "node:path";
-import { PERMISSION_TIMEOUT_MS } from "../src/files";
+import { PERMISSION_TIMEOUT_MS } from "../src/music/files";
 
 // Grant real local directory access through a browser drop, as a user would.
 // This exercises OS-backed permissions and IndexedDB restoration, unlike OPFS
@@ -609,7 +604,8 @@ for (const [repeat, shuffle, label] of [
     expect(saved.version).toBe(1);
     expect(saved.state.favorites).toEqual(["saved-track"]);
     expect(saved.state.playlists[0].name).toBe("Saved Mix");
-    expect(saved.state.volume).toBe(0.42);
+    // The in-app volume is gone; the device controls volume now.
+    expect(saved.state).not.toHaveProperty("volume");
     expect(saved.state).not.toHaveProperty("repeat");
     expect(saved.state).not.toHaveProperty("shuffle");
   });
@@ -794,7 +790,10 @@ test("directory picker saves real directory access and syncs updated lyrics afte
     .getByRole("button", { name: "Handle song 更多操作", exact: true })
     .click();
   await page.getByRole("button", { name: "同步歌词", exact: true }).click();
-  const syncDialog = page.getByRole("dialog", { name: "同步歌词", exact: true });
+  const syncDialog = page.getByRole("dialog", {
+    name: "同步歌词",
+    exact: true,
+  });
   // The timeout starts after an async permission query; keep advancing until
   // it has been scheduled and fired.
   await expect(async () => {
