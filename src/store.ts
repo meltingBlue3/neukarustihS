@@ -3,13 +3,15 @@ import { persist } from "zustand/middleware";
 import { set, del, values, createStore } from "idb-keyval";
 import { fileId, isAudio, nextTrack } from "./lib";
 import type { Track, Playlist, MusicSource } from "./lib";
-import { isEnhancedLyrics, readEnhancedLyrics } from "./lyrics";
+import { readEnhancedLyrics } from "./lyrics";
 import type { EnhancedLyrics } from "./lyrics";
 import {
   ensureReadPermission,
+  findSidecarTrack,
   findSongSiblings,
   lyricFileKind,
   readSiblingLyrics,
+  sidecarKind,
 } from "./files";
 
 const database = createStore("neukarustihs-v1", "tracks");
@@ -186,9 +188,13 @@ export async function initialize() {
 export async function importMusic(incoming: MusicSource[]) {
   if (useMusic.getState().importing) return;
   const music = incoming.filter((x) => isAudio(x.file));
-  const lyrics = incoming.filter((x) => /\.lrc$/i.test(x.file.name));
-  const enhanced = incoming.filter((x) => isEnhancedLyrics(x.file.name));
-  if (!music.length && !lyrics.length && !enhanced.length) {
+  // LRC before enhanced: a changed LRC clears a song's enhanced lyrics, which
+  // must not discard enhanced lyrics imported in the same batch.
+  const sidecars = [
+    ...incoming.filter((x) => sidecarKind(x.file.name) === "lrc"),
+    ...incoming.filter((x) => sidecarKind(x.file.name) === "enhanced"),
+  ];
+  if (!music.length && !sidecars.length) {
     useMusic.getState().notify("请选择音乐、LRC 或 .lyrics.json 歌词增强文件");
     return;
   }
@@ -262,54 +268,37 @@ export async function importMusic(incoming: MusicSource[]) {
       useMusic.setState((s) => ({ tracks: [...s.tracks, track] }));
       added++;
     }
-    let matched = 0;
-    for (const { file, relativePath } of lyrics) {
-      const stem = file.name.replace(/\.lrc$/i, "").toLowerCase();
-      const lyricPath = relativePath || file.webkitRelativePath;
-      const matches = useMusic
-        .getState()
-        .tracks.filter((t) =>
-          lyricPath
-            ? t.sourcePath?.replace(/\.[^/.]+$/, "") ===
-              lyricPath.replace(/\.lrc$/i, "")
-            : t.name.replace(/\.[^.]+$/, "").toLowerCase() === stem,
-        );
-      for (const track of matches) {
-        await saveLyrics(track.id, await file.text());
-        matched++;
-      }
-    }
-    let enhancedMatched = 0,
-      enhancedFailed = 0,
-      enhancedUnmatched = 0;
-    const selectedIds = new Set(music.map(({ file }) => fileId(file)));
-    for (const { file, relativePath } of enhanced) {
+    const counts = {
+      lrc: 0,
+      enhanced: 0,
+      unmatched: 0,
+      lrcFailed: 0,
+      enhancedFailed: 0,
+    };
+    const importedTogether = new Set(music.map(({ file }) => fileId(file)));
+    for (const sidecar of sidecars) {
+      const kind = sidecarKind(sidecar.file.name);
       try {
-        const data = await readEnhancedLyrics(file);
-        const lyricPath = relativePath || file.webkitRelativePath;
-        const stem = file.name.replace(/\.lyrics\.json$/i, "").toLowerCase();
-        const candidates = useMusic
-          .getState()
-          .tracks.filter((t) =>
-            lyricPath
-              ? t.sourcePath?.replace(/\.[^/.]+$/, "").toLowerCase() ===
-                lyricPath.replace(/\.lyrics\.json$/i, "").toLowerCase()
-              : t.name.replace(/\.[^.]+$/, "").toLowerCase() === stem,
-          );
-        const selected = candidates.filter((t) => selectedIds.has(t.id));
-        const matches = !lyricPath && selected.length ? selected : candidates;
-        // A lone sidecar cannot identify which of several same-named tracks
-        // it belongs to. The track's own import action can resolve that case.
-        if (!matches.length || (!lyricPath && matches.length > 1)) {
-          enhancedUnmatched++;
-          continue;
-        }
-        for (const track of matches) {
-          await saveEnhancedLyrics(track.id, data);
-          enhancedMatched++;
+        // Read and validate first, so a broken file reports as broken.
+        const content =
+          kind === "lrc"
+            ? await sidecar.file.text()
+            : await readEnhancedLyrics(sidecar.file);
+        const track = findSidecarTrack(
+          sidecar,
+          useMusic.getState().tracks,
+          importedTogether,
+        );
+        if (!track) counts.unmatched++;
+        else if (typeof content === "string") {
+          await saveLyrics(track.id, content);
+          counts.lrc++;
+        } else {
+          await saveEnhancedLyrics(track.id, content);
+          counts.enhanced++;
         }
       } catch {
-        enhancedFailed++;
+        counts[kind === "lrc" ? "lrcFailed" : "enhancedFailed"]++;
       }
     }
     useMusic
@@ -318,13 +307,14 @@ export async function importMusic(incoming: MusicSource[]) {
         [
           added && `已导入 ${added} 首`,
           reconnected && `已连接 ${reconnected} 首`,
-          matched && `已匹配 ${matched} 份歌词`,
-          enhancedMatched && `已匹配 ${enhancedMatched} 份翻译与注音`,
-          enhancedUnmatched &&
-            `${enhancedUnmatched} 份增强歌词未找到唯一同名歌曲，请在对应歌曲的歌词页导入`,
-          enhancedFailed &&
-            `${enhancedFailed} 份增强歌词读取或保存失败，请检查文件格式（版本 1，最大 2 MB）`,
-          lyrics.length && !matched && "未找到同名歌曲，请在歌词页单独导入",
+          counts.lrc && `已匹配 ${counts.lrc} 份歌词`,
+          counts.enhanced && `已匹配 ${counts.enhanced} 份翻译与注音`,
+          counts.unmatched &&
+            `${counts.unmatched} 份歌词未找到唯一同名歌曲，请在对应歌曲的歌词页导入`,
+          counts.lrcFailed &&
+            `${counts.lrcFailed} 份 LRC 歌词读取或保存失败`,
+          counts.enhancedFailed &&
+            `${counts.enhancedFailed} 份增强歌词读取或保存失败，请检查文件格式（版本 1，最大 2 MB）`,
           failed && "部分歌曲未能保存，下次需重新导入",
         ]
           .filter(Boolean)

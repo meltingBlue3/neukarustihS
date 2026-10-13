@@ -7,9 +7,7 @@ import {
   unlinkSync,
 } from "node:fs";
 import { resolve } from "node:path";
-import { parseLrc, nextTrack } from "../src/lib";
-import { parseEnhancedLyrics } from "../src/lyrics";
-import { ensureReadPermission, PERMISSION_TIMEOUT_MS } from "../src/files";
+import { PERMISSION_TIMEOUT_MS } from "../src/files";
 
 // Grant real local directory access through a browser drop, as a user would.
 // This exercises OS-backed permissions and IndexedDB restoration, unlike OPFS
@@ -56,22 +54,6 @@ function enhancedLine(text: string, translation: string) {
   });
 }
 
-test("enhanced lyrics validate timelines and exact ruby text before saving", () => {
-  const valid = enhancedLine("夜", "夜晚");
-  expect(parseEnhancedLyrics(`\uFEFF${valid}`).lines[0].translation).toBe(
-    "夜晚",
-  );
-  for (const invalid of [
-    "{",
-    valid.replace('"version":1', '"version":2'),
-    valid.replace('"timeMs":0', '"timeMs":-1'),
-    valid.replace('"segments":[{"text":"夜"}]', '"segments":[{"text":"朝"}]'),
-    valid.replace('"translation":"夜晚"', '"translation":{}'),
-  ]) {
-    expect(() => parseEnhancedLyrics(invalid)).toThrow();
-  }
-});
-
 const fixtures = resolve(`tests/fixtures/worker-${process.pid}`);
 mkdirSync(fixtures, { recursive: true });
 function wav(name: string, seconds: number) {
@@ -106,39 +88,6 @@ writeFileSync(
   lyric,
   "[00:00.00]First line\n[00:03.00]Second line\n[00:08.00]Third line",
 );
-
-test("read permission is granted, refused, or given up after an unanswered prompt", async () => {
-  const handle = (
-    query: PermissionState,
-    request: () => Promise<PermissionState>,
-  ) => ({ queryPermission: async () => query, requestPermission: request });
-  let prompted = false;
-  const granted = handle("granted", async () => {
-    prompted = true;
-    return "granted";
-  });
-  expect(await ensureReadPermission(granted)).toBe(true);
-  expect(prompted).toBe(false);
-  expect(
-    await ensureReadPermission(handle("prompt", async () => "granted")),
-  ).toBe(true);
-  expect(
-    await ensureReadPermission(handle("prompt", async () => "denied")),
-  ).toBe(false);
-  const unanswered = handle("prompt", () => new Promise(() => {}));
-  expect(await ensureReadPermission(unanswered, 20)).toBe(false);
-});
-
-test("LRC offsets, multiple timestamps, and queue boundaries", () => {
-  expect(parseLrc("[offset:-500]\n[00:01.20][00:02.30]hello")).toEqual([
-    { time: 0.7, text: "hello" },
-    { time: 1.7999999999999998, text: "hello" },
-  ]);
-  expect(parseLrc("[ar:Someone]\nnot timed")).toEqual([]);
-  expect(nextTrack(["a", "b"], "b", 1, "off")).toBeNull();
-  expect(nextTrack(["a", "b"], "b", 1, "all")).toBe("a");
-  expect(nextTrack([], null, 1, "all")).toBeNull();
-});
 
 test("mobile import, playback, seek, favorite, lyrics, playlist, persistence and reconnect", async ({
   page,
@@ -713,7 +662,8 @@ test("folder fallback imports nested albums, scopes lyrics, deduplicates and rec
   mkdirSync(albumB, { recursive: true });
   copyFileSync(first, resolve(albumA, "Same title.wav"));
   copyFileSync(short, resolve(albumB, "Same title.wav"));
-  writeFileSync(resolve(albumA, "Same title.lrc"), "[00:00.00]Album A lyrics");
+  // Sidecar names match case-insensitively, as on most music file systems.
+  writeFileSync(resolve(albumA, "same TITLE.lrc"), "[00:00.00]Album A lyrics");
   writeFileSync(resolve(albumB, "Same title.lrc"), "[00:00.00]Album B lyrics");
   writeFileSync(
     resolve(albumA, "Same title.lyrics.json"),

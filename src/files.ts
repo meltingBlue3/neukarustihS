@@ -1,4 +1,5 @@
 import { fileId } from "./lib";
+import { isEnhancedLyrics } from "./lyrics";
 import type {
   MusicDirectoryHandle,
   MusicHandle,
@@ -64,14 +65,39 @@ export async function readMusicFolder(directory: MusicDirectoryHandle) {
   return { incoming, skipped };
 }
 
+// A lyric sidecar shares its song's name: "夜曲.mp3" ↔ "夜曲.lrc" and
+// "夜曲.lyrics.json". Names compare case-insensitively, like most of the file
+// systems music comes from.
+const audioKey = (path: string) => path.replace(/\.[^./]+$/, "").toLowerCase();
+const sidecarKey = (path: string) =>
+  path.replace(/\.(lrc|lyrics\.json)$/i, "").toLowerCase();
+
+export const sidecarKind = (name: string) =>
+  /\.lrc$/i.test(name) ? "lrc" : isEnhancedLyrics(name) ? "enhanced" : null;
+
 export function lyricFileKind(songName: string, name: string) {
-  const stem = songName.replace(/\.[^.]+$/, "").toLowerCase();
-  const normalized = name.toLowerCase();
-  return normalized === `${stem}.lrc`
-    ? "lrc"
-    : normalized === `${stem}.lyrics.json`
-      ? "enhanced"
-      : null;
+  return sidecarKey(name) === audioKey(songName) ? sidecarKind(name) : null;
+}
+
+// Folder imports know each file's path, so a sidecar only matches the song in
+// its own directory, never a same-named song from another album; lone files
+// match by name. A sidecar belongs to exactly one song: prefer songs imported
+// together with it, and leave the rest ambiguous for the song's own lyric
+// import rather than guess.
+export function findSidecarTrack(
+  sidecar: MusicSource,
+  tracks: Track[],
+  importedTogether: Set<string>,
+) {
+  const path = sidecar.relativePath || sidecar.file.webkitRelativePath;
+  const key = sidecarKey(path || sidecar.file.name);
+  const candidates = tracks.filter((track) => {
+    const own = path ? track.sourcePath : track.name;
+    return !!own && audioKey(own) === key;
+  });
+  const together = candidates.filter((t) => importedTogether.has(t.id));
+  const pool = together.length ? together : candidates;
+  return pool.length === 1 ? pool[0] : undefined;
 }
 
 export async function readSiblingLyrics(
