@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import type { Page } from "@playwright/test";
 import {
   writeFileSync,
   mkdirSync,
@@ -8,6 +9,44 @@ import {
 import { resolve } from "node:path";
 import { parseLrc, nextTrack } from "../src/lib";
 import { parseEnhancedLyrics } from "../src/lyrics";
+import { ensureReadPermission, PERMISSION_TIMEOUT_MS } from "../src/files";
+
+// Grant real local directory access through a browser drop, as a user would.
+// This exercises OS-backed permissions and IndexedDB restoration, unlike OPFS
+// test handles. The dropped folder also becomes the directory picker's choice.
+async function grantFolderAccess(page: Page, folder: string) {
+  type GrantWindow = Window & { folderGrants?: number };
+  const grants = await page.evaluate(() => {
+    document.addEventListener(
+      "drop",
+      async (event) => {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        const item = event.dataTransfer!.items[0] as DataTransferItem & {
+          getAsFileSystemHandle: () => Promise<FileSystemDirectoryHandle>;
+        };
+        const directory = await item.getAsFileSystemHandle();
+        Object.defineProperty(window, "showDirectoryPicker", {
+          configurable: true,
+          value: async () => directory,
+        });
+        const target = window as GrantWindow;
+        target.folderGrants = (target.folderGrants ?? 0) + 1;
+      },
+      { capture: true, once: true },
+    );
+    return (window as GrantWindow).folderGrants ?? 0;
+  });
+  const cdp = await page.context().newCDPSession(page);
+  const data = { items: [], files: [folder], dragOperationsMask: 1 };
+  for (const type of ["dragEnter", "drop"] as const)
+    await cdp.send("Input.dispatchDragEvent", { type, x: 180, y: 200, data });
+  await page.waitForFunction(
+    (before) => ((window as GrantWindow).folderGrants ?? 0) > before,
+    grants,
+  );
+  await cdp.detach();
+}
 
 function enhancedLine(text: string, translation: string) {
   return JSON.stringify({
@@ -67,6 +106,28 @@ writeFileSync(
   lyric,
   "[00:00.00]First line\n[00:03.00]Second line\n[00:08.00]Third line",
 );
+
+test("read permission is granted, refused, or given up after an unanswered prompt", async () => {
+  const handle = (
+    query: PermissionState,
+    request: () => Promise<PermissionState>,
+  ) => ({ queryPermission: async () => query, requestPermission: request });
+  let prompted = false;
+  const granted = handle("granted", async () => {
+    prompted = true;
+    return "granted";
+  });
+  expect(await ensureReadPermission(granted)).toBe(true);
+  expect(prompted).toBe(false);
+  expect(
+    await ensureReadPermission(handle("prompt", async () => "granted")),
+  ).toBe(true);
+  expect(
+    await ensureReadPermission(handle("prompt", async () => "denied")),
+  ).toBe(false);
+  const unanswered = handle("prompt", () => new Promise(() => {}));
+  expect(await ensureReadPermission(unanswered, 20)).toBe(false);
+});
 
 test("LRC offsets, multiple timestamps, and queue boundaries", () => {
   expect(parseLrc("[offset:-500]\n[00:01.20][00:02.30]hello")).toEqual([
@@ -756,43 +817,7 @@ test("directory picker saves real directory access and syncs updated lyrics afte
   await expect(
     page.getByRole("button", { name: "导入音乐", exact: true }),
   ).toBeEnabled();
-  // Acquire a real local directory handle via a browser drop; this exercises
-  // OS-backed permissions and IndexedDB restoration, unlike OPFS test handles.
-  await page.evaluate(() => {
-    document.addEventListener(
-      "drop",
-      async (event) => {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        const item = event.dataTransfer!.items[0] as DataTransferItem & {
-          getAsFileSystemHandle: () => Promise<FileSystemDirectoryHandle>;
-        };
-        const directory = await item.getAsFileSystemHandle();
-        Object.defineProperty(window, "showDirectoryPicker", {
-          configurable: true,
-          value: async () => directory,
-        });
-      },
-      { capture: true, once: true },
-    );
-  });
-  const cdp = await page.context().newCDPSession(page);
-  const data = { items: [], files: [folder], dragOperationsMask: 1 };
-  await cdp.send("Input.dispatchDragEvent", {
-    type: "dragEnter",
-    x: 180,
-    y: 200,
-    data,
-  });
-  await cdp.send("Input.dispatchDragEvent", {
-    type: "drop",
-    x: 180,
-    y: 200,
-    data,
-  });
-  await page.waitForFunction(() =>
-    Object.hasOwn(window, "showDirectoryPicker"),
-  );
+  await grantFolderAccess(page, folder);
   await page.getByRole("button", { name: "导入音乐", exact: true }).click();
   await page
     .getByRole("dialog", { name: "导入音乐" })
@@ -812,14 +837,34 @@ test("directory picker saves real directory access and syncs updated lyrics afte
     enhancedLine("Updated native lyrics", "同步后的译文"),
   );
   await page.reload();
+  // Chrome resets the restored handle to "prompt" on reload, and nobody answers
+  // the browser prompt here. The app must stop waiting and ask for the folder.
+  await page.clock.install();
+  await page
+    .getByRole("button", { name: "Handle song 更多操作", exact: true })
+    .click();
+  await page.getByRole("button", { name: "同步歌词", exact: true }).click();
+  const syncDialog = page.getByRole("dialog", { name: "同步歌词", exact: true });
+  // The timeout starts after an async permission query; keep advancing until
+  // it has been scheduled and fired.
+  await expect(async () => {
+    await page.clock.runFor(PERMISSION_TIMEOUT_MS);
+    await expect(syncDialog).toBeVisible({ timeout: 500 });
+  }).toPass();
+  await expect(page.locator(".import-status")).toHaveCount(0);
+  await syncDialog.getByRole("button", { name: "关闭", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "导入音乐", exact: true }),
+  ).toBeEnabled();
+  // Once the browser grants the folder again, the restored handle syncs the
+  // updated sidecars directly, without asking for the folder.
+  await grantFolderAccess(page, folder);
   await page
     .getByRole("button", { name: "Handle song 更多操作", exact: true })
     .click();
   await page.getByRole("button", { name: "同步歌词", exact: true }).click();
   await expect(page.locator(".toast")).toContainText("已同步歌词、翻译与注音");
-  await expect(
-    page.getByRole("dialog", { name: "同步歌词", exact: true }),
-  ).toHaveCount(0);
+  await expect(syncDialog).toHaveCount(0);
   await page.locator(".track-main").click();
   await page.locator(".mini-song").click();
   const player = page.locator(".mobile-player");

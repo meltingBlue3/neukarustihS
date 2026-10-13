@@ -5,7 +5,12 @@ import { fileId, isAudio, nextTrack } from "./lib";
 import type { Track, Playlist, MusicSource } from "./lib";
 import { isEnhancedLyrics, readEnhancedLyrics } from "./lyrics";
 import type { EnhancedLyrics } from "./lyrics";
-import { findSongSiblings, lyricFileKind, readSiblingLyrics } from "./files";
+import {
+  ensureReadPermission,
+  findSongSiblings,
+  lyricFileKind,
+  readSiblingLyrics,
+} from "./files";
 
 const database = createStore("neukarustihs-v1", "tracks");
 const files = new Map<string, File>();
@@ -380,11 +385,7 @@ export async function syncTrackLyrics(
     } else {
       const directory = track.directoryHandle!;
       try {
-        if (
-          (await directory.queryPermission({ mode: "read" })) !== "granted" &&
-          (await directory.requestPermission({ mode: "read" })) !== "granted"
-        )
-          return "needs-folder";
+        if (!(await ensureReadPermission(directory))) return "needs-folder";
         candidates = await readSiblingLyrics(track, directory);
       } catch (error) {
         if (
@@ -463,15 +464,9 @@ export async function play(
   const version = ++playVersion;
   try {
     let file = files.get(id);
-    if (!file && track.handle) {
-      const permission = await track.handle.queryPermission({ mode: "read" });
-      if (
-        permission === "granted" ||
-        (await track.handle.requestPermission({ mode: "read" })) === "granted"
-      ) {
-        file = await track.handle.getFile();
-        files.set(id, file);
-      }
+    if (!file && track.handle && (await ensureReadPermission(track.handle))) {
+      file = await track.handle.getFile();
+      files.set(id, file);
     }
     if (version !== playVersion) return;
     if (!file) {

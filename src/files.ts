@@ -6,6 +6,34 @@ import type {
   Track,
 } from "./lib";
 
+// How long to wait on the browser's access prompt before offering manual
+// selection instead. Long enough to read and answer the prompt.
+export const PERMISSION_TIMEOUT_MS = 20_000;
+
+// Handles restored from IndexedDB usually come back as "prompt" (Chrome also
+// resets them on reload). An unanswered prompt never settles, so stop waiting
+// after a while; callers then fall back to asking for the file or folder.
+export async function ensureReadPermission(
+  handle: Pick<MusicHandle, "queryPermission" | "requestPermission">,
+  timeoutMs = PERMISSION_TIMEOUT_MS,
+) {
+  if ((await handle.queryPermission({ mode: "read" })) === "granted")
+    return true;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<"timeout">((resolve) => {
+    timer = setTimeout(() => resolve("timeout"), timeoutMs);
+  });
+  try {
+    const result = await Promise.race([
+      handle.requestPermission({ mode: "read" }),
+      timeout,
+    ]);
+    return result === "granted";
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function readMusicFolder(directory: MusicDirectoryHandle) {
   const incoming: MusicSource[] = [];
   let skipped = 0;
