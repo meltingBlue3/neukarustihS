@@ -1,10 +1,18 @@
 // Pure logic, run in Node without a browser.
 import { test, expect } from "@playwright/test";
-import { ensureReadPermission } from "../src/music/files";
+import {
+  ensureReadPermission,
+  isSameFile,
+  isSameLocation,
+} from "../src/music/files";
 import { parseEnhancedLyrics, parseLrc } from "../src/music/lyrics";
 import { chooseSkip, nextTrack } from "../src/music/queue";
-import { findSidecarTrack, lyricFileKind } from "../src/music/sidecars";
-import type { Track } from "../src/music/types";
+import {
+  findSidecarTrack,
+  findSongSiblings,
+  lyricFileKind,
+} from "../src/music/sidecars";
+import type { MusicHandle, Track } from "../src/music/types";
 
 function enhancedLine(text: string, translation: string) {
   return JSON.stringify({
@@ -13,6 +21,25 @@ function enhancedLine(text: string, translation: string) {
     lines: [{ timeMs: 0, text, translation, segments: [{ text }] }],
   });
 }
+
+const track = (
+  id: string,
+  name: string,
+  sourcePath?: string,
+  file: Partial<Track> = {},
+): Track => ({
+  id,
+  name,
+  sourcePath,
+  title: name,
+  artist: "",
+  album: "",
+  size: 0,
+  modified: 0,
+  duration: 0,
+  added: 0,
+  ...file,
+});
 
 test("enhanced lyrics validate timelines and exact ruby text before saving", () => {
   const valid = enhancedLine("夜", "夜晚");
@@ -64,18 +91,6 @@ test("LRC offsets, multiple timestamps, and queue boundaries", () => {
 });
 
 test("lyric sidecars match exactly one song by folder or name, ignoring case", () => {
-  const track = (id: string, name: string, sourcePath?: string): Track => ({
-    id,
-    name,
-    sourcePath,
-    title: name,
-    artist: "",
-    album: "",
-    size: 0,
-    modified: 0,
-    duration: 0,
-    added: 0,
-  });
   const sidecar = (name: string, relativePath?: string) => ({
     file: new File([""], name),
     relativePath,
@@ -125,4 +140,46 @@ test("shuffle plays every queued track once, then steps back through history", (
   const list = { ...state, playbackMode: "all" as const };
   expect(chooseSkip({ ...list, current: "c" }, 1).target).toBe("a");
   expect(chooseSkip(list, -1).target).toBe("c");
+});
+
+test("a library entry recognizes its file, also after the file changed in place", async () => {
+  const file = (content: string, name = "Song.mp3", modified = 1) =>
+    new File([content], name, { lastModified: modified });
+  const song = track("a", "Song.mp3", "Music/A/Song.mp3", {
+    size: 4,
+    modified: 1,
+  });
+  expect(isSameFile(song, file("tune"))).toBe(true);
+  // Edited tags change the size and modification time.
+  expect(isSameFile(song, file("edited tune", "Song.mp3", 2))).toBe(false);
+  const edited = { file: file("edited", "Song.mp3", 2) };
+  expect(
+    await isSameLocation(song, { ...edited, relativePath: "Music/A/Song.mp3" }),
+  ).toBe(true);
+  expect(
+    await isSameLocation(song, { ...edited, relativePath: "Music/B/Song.mp3" }),
+  ).toBe(false);
+  expect(await isSameLocation(song, edited)).toBe(false);
+  // File handles know their entry regardless of the imported folder's root.
+  const handle = (entry: string) =>
+    ({
+      entry,
+      isSameEntry: async (other: { entry: string }) => other.entry === entry,
+    }) as unknown as MusicHandle;
+  const picked = { ...song, handle: handle("/disk/Music/A/Song.mp3") };
+  expect(
+    await isSameLocation(picked, {
+      ...edited,
+      handle: handle("/disk/Music/A/Song.mp3"),
+      relativePath: "A/Song.mp3",
+    }),
+  ).toBe(true);
+  // Lyric sync from a chosen folder finds the changed song and its siblings.
+  const { siblings } = await findSongSiblings(song, [
+    { ...edited, relativePath: "Music/A/Song.mp3" },
+    { file: file("[00:00.00]A", "Song.lrc"), relativePath: "Music/A/Song.lrc" },
+    { file: file("[00:00.00]B", "Song.lrc"), relativePath: "Music/B/Song.lrc" },
+  ]);
+  expect(await siblings[0].text()).toBe("[00:00.00]A");
+  expect(siblings).toHaveLength(1);
 });

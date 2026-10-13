@@ -5,9 +5,10 @@ import { notify } from "../notice";
 import { releaseCover } from "./covers";
 import {
   ensureReadPermission,
-  fileId,
   forgetFile,
   isAudio,
+  isSameFile,
+  isSameLocation,
   pathOf,
   readMusicFolder,
   rememberFile,
@@ -62,41 +63,71 @@ export async function initialize() {
   }
 }
 
-async function readNewTrack(id: string, source: MusicSource): Promise<Track> {
-  const { file, handle, directoryHandle } = source;
-  const track: Track = {
-    id,
-    name: file.name,
-    title: file.name.replace(/\.[^.]+$/, ""),
-    artist: "未知艺术家",
-    album: "本地音乐",
-    size: file.size,
-    modified: file.lastModified,
-    duration: 0,
-    added: Date.now(),
-    handle,
-    directoryHandle,
-    sourcePath: pathOf(source),
-  };
+// What a file's tags say about its song. The browser may still decode a file
+// whose tags are unreadable, so failing to read them is not an error.
+async function readTags(file: File) {
   try {
     const { parseBlob } = await import("music-metadata");
     const { common, format } = await parseBlob(file, { duration: false });
     const picture = common.picture?.[0];
     return {
-      ...track,
-      title: common.title || track.title,
-      artist: common.artist || track.artist,
-      album: common.album || track.album,
-      duration: format.duration || 0,
+      title: common.title,
+      artist: common.artist,
+      album: common.album,
+      duration: format.duration,
       cover: picture
         ? new Blob([new Uint8Array(picture.data)], { type: picture.format })
         : undefined,
       lyrics: common.lyrics?.[0]?.text,
     };
   } catch {
-    // The browser may still decode a file whose tags are unreadable.
-    return track;
+    return {};
   }
+}
+
+// Everything a track knows about its file: which file it is and where.
+const fileFields = (source: MusicSource, previous?: Track) => ({
+  name: source.file.name,
+  size: source.file.size,
+  modified: source.file.lastModified,
+  handle: source.handle || previous?.handle,
+  directoryHandle: source.directoryHandle || previous?.directoryHandle,
+  sourcePath: pathOf(source) || previous?.sourcePath,
+});
+
+// Read a song's file into a library entry. A file that changed in place keeps
+// its entry, so favorites, playlists and imported lyrics stay with it.
+async function readTrack(source: MusicSource, previous?: Track) {
+  const tags = await readTags(source.file);
+  const track: Track = {
+    id: previous?.id ?? crypto.randomUUID(),
+    added: previous?.added ?? Date.now(),
+    ...fileFields(source, previous),
+    title: tags.title || source.file.name.replace(/\.[^.]+$/, ""),
+    artist: tags.artist || "未知艺术家",
+    album: tags.album || "本地音乐",
+    duration: tags.duration || 0,
+    cover: tags.cover,
+    lyrics: previous?.lyrics ?? tags.lyrics,
+    enhancedLyrics: previous?.enhancedLyrics,
+  };
+  return track;
+}
+
+// Tracks grouped by file name, the first thing any two copies of a file share.
+const nameIndexes = new WeakMap<Track[], Map<string, Track[]>>();
+function tracksNamed(tracks: Track[], name: string) {
+  let index = nameIndexes.get(tracks);
+  if (!index) {
+    index = new Map();
+    for (const track of tracks) {
+      const named = index.get(track.name);
+      if (named) named.push(track);
+      else index.set(track.name, [track]);
+    }
+    nameIndexes.set(tracks, index);
+  }
+  return index.get(name) ?? [];
 }
 
 // Imports save and show tracks in batches: refreshing the whole library after
@@ -105,8 +136,24 @@ function batchedWrites() {
   const pending = new Map<string, Track>();
   let lastFlush = performance.now();
   return {
-    // A track's latest version, including changes not yet flushed.
-    get: (id: string) => pending.get(id) ?? findTrack(id),
+    // The entry a chosen file belongs to, including changes not yet flushed:
+    // the very same file, or else whatever was at its location.
+    async find(source: MusicSource) {
+      const { name } = source.file;
+      const stored = tracksNamed(useMusic.getState().tracks, name).map(
+        (t) => pending.get(t.id) ?? t,
+      );
+      const candidates = [
+        ...stored,
+        ...[...pending.values()].filter(
+          (t) => t.name === name && !stored.some((s) => s.id === t.id),
+        ),
+      ];
+      const same = candidates.find((t) => isSameFile(t, source.file));
+      if (same) return same;
+      for (const track of candidates)
+        if (await isSameLocation(track, source)) return track;
+    },
     put: (track: Track) => void pending.set(track.id, track),
     // Save and show pending tracks, at most a few times a second unless
     // forced. Resolves to how many could not be saved.
@@ -122,14 +169,17 @@ function batchedWrites() {
         // Still playable this session; importing again retries the save.
         unsaved = batch.size;
       }
-      useMusic.setState((s) => {
-        const known = trackIndex(s.tracks);
-        return {
-          tracks: [
-            ...s.tracks.map((t) => batch.get(t.id) ?? t),
-            ...[...batch.values()].filter((t) => !known.has(t.id)),
-          ],
-        };
+      const { tracks } = useMusic.getState();
+      const known = trackIndex(tracks);
+      for (const track of batch.values()) {
+        const previous = known.get(track.id)?.cover;
+        if (previous !== track.cover) releaseCover(previous);
+      }
+      useMusic.setState({
+        tracks: [
+          ...tracks.map((t) => batch.get(t.id) ?? t),
+          ...[...batch.values()].filter((t) => !known.has(t.id)),
+        ],
       });
       lastFlush = performance.now();
       return unsaved;
@@ -138,7 +188,8 @@ function batchedWrites() {
 }
 
 // Import songs and lyric sidecars in one go. Songs already in the library are
-// reconnected to the newly chosen file instead of added twice.
+// reconnected to the newly chosen file, or updated if their file changed,
+// instead of added twice.
 export async function importMusic(
   incoming: MusicSource[],
   { skipped = 0 } = {},
@@ -157,6 +208,7 @@ export async function importMusic(
   }
   const counts = {
     added: 0,
+    updated: 0,
     reconnected: 0,
     unsaved: 0,
     lrc: 0,
@@ -168,30 +220,30 @@ export async function importMusic(
   useMusic.setState({ importing: "正在读取音乐…" });
   try {
     const writes = batchedWrites();
+    const importedTogether = new Set<string>();
     for (const [i, source] of music.entries()) {
       useMusic.setState({ importing: `正在读取 ${i + 1} / ${music.length}` });
-      const id = fileId(source.file);
-      rememberFile(id, source.file);
-      const existing = writes.get(id);
-      if (existing) {
-        const { handle, directoryHandle } = source;
-        const sourcePath = pathOf(source);
-        if (handle || sourcePath || directoryHandle)
-          writes.put({
-            ...existing,
-            handle: handle || existing.handle,
-            directoryHandle: directoryHandle || existing.directoryHandle,
-            sourcePath: sourcePath || existing.sourcePath,
-          });
-        counts.reconnected++;
-      } else {
-        writes.put(await readNewTrack(id, source));
+      const known = await writes.find(source);
+      let track: Track;
+      if (!known) {
+        track = await readTrack(source);
         counts.added++;
+      } else if (!isSameFile(known, source.file)) {
+        track = await readTrack(source, known);
+        counts.updated++;
+      } else {
+        // The same file, perhaps chosen from somewhere new.
+        const relocated =
+          source.handle || source.directoryHandle || pathOf(source);
+        track = relocated ? { ...known, ...fileFields(source, known) } : known;
+        counts.reconnected++;
       }
+      if (track !== known) writes.put(track);
+      importedTogether.add(track.id);
+      rememberFile(track.id, source.file);
       counts.unsaved += await writes.flush();
     }
     counts.unsaved += await writes.flush(true);
-    const importedTogether = new Set(music.map(({ file }) => fileId(file)));
     for (const sidecar of sidecars) {
       const kind = sidecarKind(sidecar.file.name);
       try {
@@ -220,6 +272,7 @@ export async function importMusic(
     notify(
       [
         counts.added && `已导入 ${counts.added} 首`,
+        counts.updated && `已更新 ${counts.updated} 首有变化的歌曲`,
         counts.reconnected && `已连接 ${counts.reconnected} 首`,
         counts.lrc && `已匹配 ${counts.lrc} 份歌词`,
         counts.enhanced && `已匹配 ${counts.enhanced} 份翻译与注音`,
@@ -299,7 +352,10 @@ export async function syncTrackLyrics(
     let candidates: File[],
       source: Partial<Track> = {};
     if (incoming) {
-      const { song, siblings, sourcePath } = findSongSiblings(track, incoming);
+      const { song, siblings, sourcePath } = await findSongSiblings(
+        track,
+        incoming,
+      );
       candidates = siblings;
       source = {
         directoryHandle: song.directoryHandle,

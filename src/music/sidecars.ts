@@ -1,5 +1,5 @@
 // Lyric sidecars: the LRC and enhanced lyrics files that sit beside a song.
-import { fileId, pathOf } from "./files";
+import { isSameFile, isSameLocation, pathOf } from "./files";
 import { isEnhancedLyrics } from "./lyrics";
 import type {
   MusicDirectoryHandle,
@@ -56,10 +56,20 @@ export async function readSiblingLyrics(
   return result;
 }
 
-// A directory upload is a snapshot, not a reusable permission. Find the exact
-// audio file first, then use only siblings; never match across album folders.
-export function findSongSiblings(track: Track, incoming: MusicSource[]) {
-  const matches = incoming.filter((source) => fileId(source.file) === track.id);
+// A directory upload is a snapshot, not a reusable permission. Find the song's
+// own file first (as imported, or changed in place since), then use only its
+// siblings; never match across album folders.
+export async function findSongSiblings(track: Track, incoming: MusicSource[]) {
+  let matches = incoming.filter((source) => isSameFile(track, source.file));
+  if (!matches.length) {
+    const located = await Promise.all(
+      incoming.map(
+        (source) =>
+          source.file.name === track.name && isSameLocation(track, source),
+      ),
+    );
+    matches = incoming.filter((_, i) => located[i]);
+  }
   if (matches.length !== 1)
     throw new Error(
       matches.length

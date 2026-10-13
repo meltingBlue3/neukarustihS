@@ -1042,3 +1042,57 @@ test("playback progress does not rewrite saved preferences", async ({
     .toBeGreaterThan(1.5);
   expect(await writes()).toBe(before);
 });
+
+test("a song whose file changed keeps its entry, favorite and lyrics", async ({
+  page,
+}) => {
+  const folder = resolve(fixtures, "Changing album");
+  mkdirSync(folder, { recursive: true });
+  const song = resolve(folder, "Changing song.wav"),
+    lyrics = resolve(folder, "Changing song.lrc");
+  copyFileSync(first, song);
+  writeFileSync(lyrics, "[00:00.00]Kept lyrics");
+  await page.goto("./");
+  await expect(
+    page.getByRole("button", { name: "导入音乐", exact: true }),
+  ).toBeEnabled();
+  await grantFolderAccess(page, folder);
+  const importFolder = async () => {
+    await page.getByRole("button", { name: "导入音乐", exact: true }).click();
+    await page
+      .getByRole("dialog", { name: "导入音乐" })
+      .getByRole("button", { name: /^导入文件夹/ })
+      .click();
+  };
+  await importFolder();
+  const duration = page.locator(".track-row .track-duration");
+  await expect(duration).toHaveText("0:20");
+  await page
+    .getByRole("button", { name: "Changing song 更多操作", exact: true })
+    .click();
+  await page.getByRole("button", { name: "加入我喜欢", exact: true }).click();
+  unlinkSync(lyrics);
+  // Rewrite the file in place, as a tag editor would: new size and time.
+  copyFileSync(short, song);
+  await importFolder();
+  await expect(page.locator(".toast")).toContainText("已更新 1 首");
+  await expect(page.locator(".track-row")).toHaveCount(1);
+  await expect(duration).toHaveText("0:01");
+  // A folder upload has no file handles; its path identifies the song.
+  copyFileSync(first, song);
+  await page.getByTestId("folder-input").setInputFiles(folder);
+  await expect(page.locator(".toast")).toContainText("已更新 1 首");
+  await expect(page.locator(".track-row")).toHaveCount(1);
+  await expect(duration).toHaveText("0:20");
+  await page
+    .getByRole("navigation", { name: "手机导航" })
+    .getByRole("button", { name: "我喜欢", exact: true })
+    .click();
+  await expect(page.locator(".track-row")).toHaveCount(1);
+  await page.locator(".track-main").click();
+  await page.locator(".mini-song").click();
+  const player = page.locator(".mobile-player");
+  await player.getByRole("button", { name: "暂停", exact: true }).click();
+  await player.getByRole("button", { name: "歌词", exact: true }).click();
+  await expect(player.locator(".lyric-original")).toHaveText("Kept lyrics");
+});

@@ -27,14 +27,26 @@ const lyricName = /\.(lrc|lyrics\.json)$/i;
 export const isAudio = (file: File) =>
   file.type.startsWith("audio/") || audioName.test(file.name);
 
-// The file a source was imported from: the same name, size and modification
-// time is taken to be the same file.
-export const fileId = (file: File) =>
-  `${file.name}:${file.size}:${file.lastModified}`;
-
 // Where a source sits within an imported folder, if it came from one.
 export const pathOf = (source: MusicSource) =>
   source.relativePath || source.file.webkitRelativePath || undefined;
+
+// Whether a file is exactly the one a library entry was read from. Files are
+// not hashed: the same name, size and modification time count as the same.
+export const isSameFile = (track: Track, file: File) =>
+  track.name === file.name &&
+  track.size === file.size &&
+  track.modified === file.lastModified;
+
+// Whether a source sits where an entry's file was, even if the file changed
+// since (say, its tags were edited): the same file system entry when both
+// have handles, otherwise the same path within an imported folder.
+export async function isSameLocation(track: Track, source: MusicSource) {
+  if (track.handle && source.handle)
+    return track.handle.isSameEntry(source.handle).catch(() => false);
+  const path = pathOf(source);
+  return !!path && path === track.sourcePath;
+}
 
 // How long to wait on the browser's access prompt before offering manual
 // selection instead. Long enough to read and answer the prompt.
