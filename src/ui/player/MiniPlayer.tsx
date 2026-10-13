@@ -1,12 +1,12 @@
 import { ListMusic, Pause, Play } from "lucide-react";
 import { togglePlay } from "../../music/playback";
-import { useMusic } from "../../music/store";
+import { currentTrack, useMusic } from "../../music/store";
 import { Cover, IconButton } from "../common";
 import { openDialog, setPlayerOpen } from "../state";
 
 // The phone's bar above the navigation; tapping the song opens the player.
 export function MiniPlayer() {
-  const track = useMusic((s) => s.tracks.find((t) => t.id === s.current)),
+  const track = useMusic(currentTrack),
     playing = useMusic((s) => s.playing);
   if (!track) return null;
   return (

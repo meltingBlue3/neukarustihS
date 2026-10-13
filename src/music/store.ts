@@ -1,7 +1,9 @@
 // The music state shared by the library, playback and UI. Logic that touches
 // storage or audio lives in library.ts and playback.ts.
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { createJSONStorage, persist } from "zustand/middleware";
+import type { PersistStorage, StorageValue } from "zustand/middleware";
+import { shallow } from "zustand/shallow";
 import type { PlaybackMode } from "./queue";
 import type { Playlist, Track } from "./types";
 
@@ -30,6 +32,37 @@ export interface MusicState {
   addToPlaylist: (playlist: string, id: string) => void;
   removeFromPlaylist: (playlist: string, id: string) => void;
   cyclePlaybackMode: () => void;
+}
+
+type Preferences = Pick<
+  MusicState,
+  | "playlists"
+  | "favorites"
+  | "playbackMode"
+  | "showTranslation"
+  | "showFurigana"
+  | "current"
+  | "queue"
+>;
+
+// Persist saves on every state change, including the playback position
+// several times a second. Only write when a saved preference changed.
+function preferenceStorage(): PersistStorage<Preferences> {
+  const json = createJSONStorage<Preferences>(() => localStorage)!;
+  let saved: StorageValue<Preferences> | undefined;
+  return {
+    ...json,
+    setItem(name, value) {
+      if (
+        saved &&
+        saved.version === value.version &&
+        shallow(saved.state, value.state)
+      )
+        return;
+      saved = value;
+      return json.setItem(name, value);
+    },
+  };
 }
 
 export const useMusic = create<MusicState>()(
@@ -104,9 +137,10 @@ export const useMusic = create<MusicState>()(
       // Preferences only; tracks live in IndexedDB (library.ts).
       name: "neukarustihs-preferences-v1",
       version: 1,
+      storage: preferenceStorage(),
       // Version 0 kept separate repeat and shuffle flags and an in-app volume,
       // now left to the device.
-      migrate: (persisted) => {
+      migrate: (persisted): Preferences => {
         const saved = (
           persisted && typeof persisted === "object" ? persisted : {}
         ) as Partial<MusicState> & { repeat?: unknown; shuffle?: unknown };
@@ -122,9 +156,11 @@ export const useMusic = create<MusicState>()(
           current: saved.current ?? null,
           queue: saved.queue ?? [],
           playbackMode,
+          showTranslation: true,
+          showFurigana: true,
         };
       },
-      partialize: (s) => ({
+      partialize: (s): Preferences => ({
         playlists: s.playlists,
         favorites: s.favorites,
         playbackMode: s.playbackMode,
@@ -136,3 +172,17 @@ export const useMusic = create<MusicState>()(
     },
   ),
 );
+
+// Tracks by id, rebuilt only when the track list itself changes.
+const indexes = new WeakMap<Track[], Map<string, Track>>();
+export function trackIndex(tracks: Track[]) {
+  let index = indexes.get(tracks);
+  if (!index) {
+    index = new Map(tracks.map((t) => [t.id, t]));
+    indexes.set(tracks, index);
+  }
+  return index;
+}
+export const useTrackIndex = () => useMusic((s) => trackIndex(s.tracks));
+export const currentTrack = (s: MusicState) =>
+  s.current ? trackIndex(s.tracks).get(s.current) : undefined;

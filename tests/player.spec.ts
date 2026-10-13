@@ -934,3 +934,111 @@ test("lyric sync folder fallback finds only the original song's siblings", async
   await player.getByRole("button", { name: "歌词", exact: true }).click();
   await expect(player.locator(".lyric-translation")).toHaveText("正确译文");
 });
+
+test("large libraries render only nearby rows yet stay fully browsable", async ({
+  page,
+}) => {
+  const count = 3000;
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("./");
+  await expect(
+    page.getByRole("button", { name: "导入音乐", exact: true }),
+  ).toBeEnabled();
+  // Seed the stored library directly; importing thousands of files would
+  // only test metadata parsing.
+  await page.evaluate(async (count) => {
+    const ids = Array.from({ length: count }, (_, i) => `track-${i}`);
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("neukarustihs-v1");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = db.transaction("tracks", "readwrite");
+      ids.forEach((id, i) =>
+        transaction.objectStore("tracks").put(
+          {
+            id,
+            name: `Song ${i}.mp3`,
+            title: `Song ${String(i).padStart(4, "0")}`,
+            artist: `Artist ${i % 40}`,
+            album: "Seeded",
+            size: 1,
+            modified: 1,
+            duration: 180,
+            added: i,
+          },
+          id,
+        ),
+      );
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    db.close();
+    localStorage.setItem(
+      "neukarustihs-preferences-v1",
+      JSON.stringify({ version: 1, state: { queue: ids } }),
+    );
+  }, count);
+  await page.reload();
+  await expect(page.getByText(`${count} 首私藏`)).toBeVisible();
+  const rows = page.locator(".track-list .track-row");
+  await expect(rows.first()).toContainText("Song 2999");
+  expect(await rows.count()).toBeLessThan(60);
+  // The page still scrolls through every song, newest first.
+  await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+  await expect(rows.last()).toContainText("Song 0000");
+  await expect(rows.last().locator(".track-number")).toHaveText("3000");
+  expect(await rows.count()).toBeLessThan(60);
+  const search = page.getByRole("textbox", { name: "搜索音乐" });
+  await search.fill("Song 1234");
+  await expect(rows).toHaveCount(1);
+  await search.fill("");
+  await page.getByRole("combobox", { name: "歌曲排序" }).selectOption("title");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect(rows.first()).toContainText("Song 0000");
+  // "Play all" queues the whole library; the queue dialog scrolls it too.
+  await page
+    .locator(".desktop-player")
+    .getByRole("button", { name: "播放队列", exact: true })
+    .click();
+  const queue = page.getByRole("dialog", { name: `播放队列 · ${count}` });
+  const queueRows = queue.locator(".queue-row");
+  await expect(queueRows.first()).toContainText("Song 0000");
+  expect(await queueRows.count()).toBeLessThan(60);
+  await queue.evaluate((dialog) => dialog.scrollTo(0, dialog.scrollHeight));
+  await expect(queueRows.last()).toContainText("Song 2999");
+  expect(await queueRows.count()).toBeLessThan(60);
+});
+
+test("playback progress does not rewrite saved preferences", async ({
+  page,
+}) => {
+  type Counted = Window & { preferenceWrites?: number };
+  await page.addInitScript(() => {
+    const setItem = Storage.prototype.setItem;
+    const counted = window as Counted;
+    counted.preferenceWrites = 0;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === "neukarustihs-preferences-v1")
+        counted.preferenceWrites = (counted.preferenceWrites ?? 0) + 1;
+      return setItem.call(this, key, value);
+    };
+  });
+  await page.goto("./");
+  await page.getByTestId("music-input").setInputFiles(first);
+  await expect(page.locator(".track-row")).toHaveCount(1);
+  await page.locator(".track-main").click();
+  const progress = page.locator(".desktop-player input[type=range]");
+  await expect
+    .poll(async () => Number(await progress.inputValue()))
+    .toBeGreaterThan(0);
+  const writes = () =>
+    page.evaluate(() => (window as Counted).preferenceWrites);
+  const before = await writes();
+  // Several position updates later, nothing saved has changed.
+  await expect
+    .poll(async () => Number(await progress.inputValue()))
+    .toBeGreaterThan(1.5);
+  expect(await writes()).toBe(before);
+});

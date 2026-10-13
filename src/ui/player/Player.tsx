@@ -13,7 +13,7 @@ import {
   SkipForward,
 } from "lucide-react";
 import { seek, skip, togglePlay } from "../../music/playback";
-import { useMusic } from "../../music/store";
+import { currentTrack, useMusic } from "../../music/store";
 import { Cover, IconButton } from "../common";
 import { formatTime } from "../format";
 import { useImport } from "../importContext";
@@ -61,7 +61,7 @@ export function Player({ mobile }: { mobile?: boolean }) {
     playing = useMusic((s) => s.playing),
     playbackMode = useMusic((s) => s.playbackMode),
     favorite = useMusic((s) => !!s.current && s.favorites.includes(s.current)),
-    track = useMusic((s) => s.tracks.find((t) => t.id === s.current));
+    track = useMusic(currentTrack);
   const { chooseLyricsFor } = useImport();
   const modeLabel = modeLabels[playbackMode];
   const [page, setPage] = useState<"cover" | "lyrics">("cover");

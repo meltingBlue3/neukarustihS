@@ -9,13 +9,13 @@ import {
 } from "lucide-react";
 import { syncTrackLyrics } from "../../music/library";
 import { enqueue } from "../../music/playback";
-import { useMusic } from "../../music/store";
+import { trackIndex, useMusic } from "../../music/store";
 import { notify } from "../../notice";
 import { Modal } from "../common";
 import { closeAllDialogs, closeDialog, openDialog, useUi } from "../state";
 
 export function TrackActionsDialog({ trackId }: { trackId: string }) {
-  const track = useMusic((s) => s.tracks.find((t) => t.id === trackId)),
+  const track = useMusic((s) => trackIndex(s.tracks).get(trackId)),
     favorite = useMusic((s) => s.favorites.includes(trackId)),
     playlists = useMusic((s) => s.playlists),
     busy = useMusic((s) => !!s.importing || !s.ready);

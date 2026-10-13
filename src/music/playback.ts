@@ -1,9 +1,10 @@
 // The single audio element and everything that drives it: transport, queue,
 // sleep timer and the system media controls.
 import { notify } from "../notice";
+import { coverUrl } from "./covers";
 import { getTrackFile } from "./files";
 import { chooseSkip } from "./queue";
-import { useMusic } from "./store";
+import { trackIndex, useMusic } from "./store";
 import type { Track } from "./types";
 
 export const audio = new Audio();
@@ -19,7 +20,7 @@ export async function play(
   context?: string[],
   fromHistory = false,
 ) {
-  const track = useMusic.getState().tracks.find((t) => t.id === id);
+  const track = trackIndex(useMusic.getState().tracks).get(id);
   if (!track) return;
   const version = ++playVersion;
   try {
@@ -143,7 +144,7 @@ export function setSleep(minutes: number) {
 function showInSystemControls(track: Track) {
   if (!("mediaSession" in navigator)) return;
   const artwork = track.cover
-    ? [{ src: URL.createObjectURL(track.cover), type: track.cover.type }]
+    ? [{ src: coverUrl(track.cover), type: track.cover.type }]
     : [
         {
           src: new URL(
@@ -154,14 +155,12 @@ function showInSystemControls(track: Track) {
           type: "image/png",
         },
       ];
-  const previousArt = navigator.mediaSession.metadata?.artwork[0]?.src;
   navigator.mediaSession.metadata = new MediaMetadata({
     title: track.title,
     artist: track.artist,
     album: track.album,
     artwork,
   });
-  if (previousArt?.startsWith("blob:")) URL.revokeObjectURL(previousArt);
 }
 
 audio.addEventListener("play", () => {

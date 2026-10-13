@@ -1,7 +1,8 @@
 // Small building blocks shared across the interface.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import type { ReactNode } from "react";
 import { X } from "lucide-react";
+import { coverUrl } from "../music/covers";
 import { useNotice } from "../notice";
 import type { Track } from "../music/types";
 
@@ -44,20 +45,10 @@ export function Cover({
   track?: Track;
   className?: string;
 }) {
-  const [url, setUrl] = useState<string>();
-  useEffect(() => {
-    if (!track?.cover) {
-      setUrl(undefined);
-      return;
-    }
-    const object = URL.createObjectURL(track.cover);
-    setUrl(object);
-    return () => URL.revokeObjectURL(object);
-  }, [track?.cover]);
   return (
     <img
       className={`cover ${className}`}
-      src={url || defaultArt}
+      src={track?.cover ? coverUrl(track.cover) : defaultArt}
       alt={track ? `${track.title} 封面` : "原创夜色插画：戴着耳机的城市夜行人"}
     />
   );

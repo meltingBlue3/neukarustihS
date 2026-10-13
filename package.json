@@ -13,6 +13,7 @@
     "icons": "node scripts/generate-icons.mjs"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.18",
     "idb-keyval": "^6.3.0",
     "lucide-react": "^1.50.0",
     "music-metadata": "^11.16.1",

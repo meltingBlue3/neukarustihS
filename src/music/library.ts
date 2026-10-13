@@ -1,7 +1,8 @@
 // The music library: importing songs and lyrics, keeping them in IndexedDB,
 // and removing them again.
-import { createStore, del, set, values } from "idb-keyval";
+import { createStore, del, set, setMany, values } from "idb-keyval";
 import { notify } from "../notice";
+import { releaseCover } from "./covers";
 import {
   ensureReadPermission,
   fileId,
@@ -21,13 +22,13 @@ import {
   readSiblingLyrics,
   sidecarKind,
 } from "./sidecars";
-import { useMusic } from "./store";
+import { trackIndex, useMusic } from "./store";
 import type { MusicDirectoryHandle, MusicSource, Track } from "./types";
 
 const database = createStore("neukarustihs-v1", "tracks");
 
 const findTrack = (id: string) =>
-  useMusic.getState().tracks.find((t) => t.id === id);
+  trackIndex(useMusic.getState().tracks).get(id);
 
 async function storeTrack(track: Track) {
   await set(track.id, track, database);
@@ -47,14 +48,13 @@ const withLyrics = (track: Track, lyrics: string): Track => ({
 export async function initialize() {
   try {
     const tracks = await values<Track>(database);
+    const known = trackIndex(tracks);
     const saved = useMusic.getState();
     useMusic.setState({
       tracks,
       ready: true,
-      queue: saved.queue.filter((id) => tracks.some((t) => t.id === id)),
-      current: tracks.some((t) => t.id === saved.current)
-        ? saved.current
-        : null,
+      queue: saved.queue.filter((id) => known.has(id)),
+      current: saved.current && known.has(saved.current) ? saved.current : null,
     });
   } catch {
     useMusic.setState({ ready: true });
@@ -99,6 +99,44 @@ async function readNewTrack(id: string, source: MusicSource): Promise<Track> {
   }
 }
 
+// Imports save and show tracks in batches: refreshing the whole library after
+// every file would make large imports quadratic.
+function batchedWrites() {
+  const pending = new Map<string, Track>();
+  let lastFlush = performance.now();
+  return {
+    // A track's latest version, including changes not yet flushed.
+    get: (id: string) => pending.get(id) ?? findTrack(id),
+    put: (track: Track) => void pending.set(track.id, track),
+    // Save and show pending tracks, at most a few times a second unless
+    // forced. Resolves to how many could not be saved.
+    async flush(force = false) {
+      if (!pending.size || (!force && performance.now() - lastFlush < 250))
+        return 0;
+      const batch = new Map(pending);
+      pending.clear();
+      let unsaved = 0;
+      try {
+        await setMany([...batch], database);
+      } catch {
+        // Still playable this session; importing again retries the save.
+        unsaved = batch.size;
+      }
+      useMusic.setState((s) => {
+        const known = trackIndex(s.tracks);
+        return {
+          tracks: [
+            ...s.tracks.map((t) => batch.get(t.id) ?? t),
+            ...[...batch.values()].filter((t) => !known.has(t.id)),
+          ],
+        };
+      });
+      lastFlush = performance.now();
+      return unsaved;
+    },
+  };
+}
+
 // Import songs and lyric sidecars in one go. Songs already in the library are
 // reconnected to the newly chosen file instead of added twice.
 export async function importMusic(
@@ -129,33 +167,30 @@ export async function importMusic(
   };
   useMusic.setState({ importing: "正在读取音乐…" });
   try {
+    const writes = batchedWrites();
     for (const [i, source] of music.entries()) {
       useMusic.setState({ importing: `正在读取 ${i + 1} / ${music.length}` });
       const id = fileId(source.file);
       rememberFile(id, source.file);
-      const existing = findTrack(id);
+      const existing = writes.get(id);
       if (existing) {
         const { handle, directoryHandle } = source;
         const sourcePath = pathOf(source);
         if (handle || sourcePath || directoryHandle)
-          await storeTrack({
+          writes.put({
             ...existing,
             handle: handle || existing.handle,
             directoryHandle: directoryHandle || existing.directoryHandle,
             sourcePath: sourcePath || existing.sourcePath,
           });
         counts.reconnected++;
-        continue;
+      } else {
+        writes.put(await readNewTrack(id, source));
+        counts.added++;
       }
-      const track = await readNewTrack(id, source);
-      try {
-        await set(id, track, database);
-      } catch {
-        counts.unsaved++;
-      }
-      useMusic.setState((s) => ({ tracks: [...s.tracks, track] }));
-      counts.added++;
+      counts.unsaved += await writes.flush();
     }
+    counts.unsaved += await writes.flush(true);
     const importedTogether = new Set(music.map(({ file }) => fileId(file)));
     for (const sidecar of sidecars) {
       const kind = sidecarKind(sidecar.file.name);
@@ -354,6 +389,7 @@ export async function removeTrack(id: string) {
   if (useMusic.getState().current === id) unload();
   await del(id, database);
   forgetFile(id);
+  releaseCover(findTrack(id)?.cover);
   useMusic.setState((s) => ({
     tracks: s.tracks.filter((t) => t.id !== id),
     favorites: s.favorites.filter((t) => t !== id),
