@@ -52,9 +52,10 @@ export async function isSameLocation(track: Track, source: MusicSource) {
 // selection instead. Long enough to read and answer the prompt.
 export const PERMISSION_TIMEOUT_MS = 20_000;
 
-// Handles restored from IndexedDB usually come back as "prompt" (Chrome also
-// resets them on reload). An unanswered prompt never settles, so stop waiting
-// after a while; callers then fall back to asking for the file or folder.
+// Handles restored from IndexedDB usually come back as "prompt" (Chrome resets
+// them once no tab of the app is open). An unanswered prompt never settles, so
+// stop waiting after a while; callers then fall back to asking for the file or
+// folder.
 export async function ensureReadPermission(
   handle: Pick<MusicHandle, "queryPermission" | "requestPermission">,
   timeoutMs = PERMISSION_TIMEOUT_MS,

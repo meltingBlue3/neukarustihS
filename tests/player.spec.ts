@@ -748,7 +748,7 @@ test("folder fallback imports nested albums, scopes lyrics, deduplicates and rec
   );
 });
 
-test("directory picker saves real directory access and syncs updated lyrics after reload", async ({
+test("directory picker saves real directory access and syncs updated lyrics after reopening", async ({
   page,
 }) => {
   const folder = resolve(fixtures, "Native folder"),
@@ -782,9 +782,22 @@ test("directory picker saves real directory access and syncs updated lyrics afte
     enhanced,
     enhancedLine("Updated native lyrics", "同步后的译文"),
   );
-  await page.reload();
-  // Chrome resets the restored handle to "prompt" on reload, and nobody answers
-  // the browser prompt here. The app must stop waiting and ask for the folder.
+  // Chrome keeps folder access across reloads but drops it once no tab of the
+  // app is open, so reopen the app as on a later visit. The restored handle
+  // comes back as "prompt".
+  const reopened = await page.context().newPage();
+  await page.close();
+  page = reopened;
+  await page.goto("./");
+  // Chrome's own prompt would block the page until answered, which a test
+  // cannot do, so stand in for a prompt nobody answers: it never settles. The
+  // app must stop waiting and ask for the folder.
+  await page.evaluate(() =>
+    Object.defineProperty(FileSystemHandle.prototype, "requestPermission", {
+      configurable: true,
+      value: () => new Promise(() => {}),
+    }),
+  );
   await page.clock.install();
   await page
     .getByRole("button", { name: "Handle song 更多操作", exact: true })
