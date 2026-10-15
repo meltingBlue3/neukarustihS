@@ -2,6 +2,9 @@ import { defineConfig } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests",
   fullyParallel: true,
+  // Every test plays real audio. Playwright's default of one worker per two
+  // CPU threads runs so many browsers at once that songs stall for seconds.
+  workers: 4,
   timeout: 35000,
   use: {
     // Exercise the supported browser, including native directory permissions.

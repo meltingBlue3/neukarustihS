@@ -484,6 +484,128 @@ test("unified modes control list wrap, single repeat and random track completion
   ).toBeVisible();
 });
 
+type HandoffWindow = Window &
+  typeof globalThis & {
+    decks: Set<HTMLMediaElement>;
+    handoffs: { event: string; others: number; volume: number }[];
+  };
+
+test("songs hand over between two players so the media session never runs empty", async ({
+  page,
+}) => {
+  // Playback can stall for seconds when the whole suite runs in parallel.
+  test.setTimeout(70000);
+  const errors: string[] = [];
+  page.on("pageerror", (e) => errors.push(e.message));
+  // Record each player the app starts and, whenever one starts or ends,
+  // how many others were still playing at that moment.
+  await page.addInitScript(() => {
+    const decks = new Set<HTMLMediaElement>();
+    const handoffs: HandoffWindow["handoffs"] = [];
+    Object.assign(window, { decks, handoffs });
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+      if (!decks.has(this)) {
+        decks.add(this);
+        for (const event of ["playing", "ended"])
+          this.addEventListener(event, () =>
+            handoffs.push({
+              event,
+              others: [...decks].filter((d) => d !== this && !d.paused).length,
+              volume: this.volume,
+            }),
+          );
+      }
+      return play.call(this);
+    };
+  });
+  const decks = () =>
+    page.evaluate(() =>
+      [...(window as HandoffWindow).decks].map((d) => ({
+        paused: d.paused,
+        volume: d.volume,
+      })),
+    );
+  const handoffs = () =>
+    page.evaluate(() => (window as HandoffWindow).handoffs);
+  const playingDecks = async () => (await decks()).filter((d) => !d.paused);
+  // Wait in short steps so a brief two-player moment is not missed.
+  const quickly = { intervals: [100], timeout: 20000 };
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("./");
+  await expect(
+    page.getByRole("button", { name: "导入音乐", exact: true }),
+  ).toBeEnabled();
+  await page.getByTestId("music-input").setInputFiles([first, second]);
+  await expect(page.locator(".track-row")).toHaveCount(2);
+  await page
+    .getByRole("button", {
+      name: "Midnight Test 封面 Midnight Test 未知艺术家",
+      exact: true,
+    })
+    .click();
+  const title = page.locator(".desktop-player h2");
+  const progress = page.getByRole("slider", { name: "播放进度" });
+  const desktop = page.locator(".desktop-player");
+  await expect(
+    desktop.getByRole("button", { name: "暂停", exact: true }),
+  ).toBeVisible();
+
+  // Near the end the next song starts inaudibly while the current one plays,
+  // then takes over from its beginning when the current one ends.
+  await progress.fill("16.5");
+  await expect(title).toHaveText("Blue Hour Test", { timeout: 20000 });
+  await expect
+    .poll(async () => Number(await progress.inputValue()), quickly)
+    .toBeLessThan(1);
+  const log = await handoffs();
+  const ended = log.findIndex((h) => h.event === "ended");
+  expect(log[ended].others).toBe(1);
+  expect(
+    log
+      .slice(0, ended)
+      .some((h) => h.event === "playing" && h.others === 1 && h.volume < 0.01),
+  ).toBe(true);
+  await expect(
+    desktop.getByRole("button", { name: "暂停", exact: true }),
+  ).toBeVisible();
+  expect(await playingDecks()).toEqual([{ paused: false, volume: 1 }]);
+
+  // A manual skip starts the new song before the old one stops.
+  const before = log.length;
+  await page.getByRole("button", { name: "下一首", exact: true }).click();
+  await expect(title).toHaveText("Midnight Test");
+  await expect
+    .poll(
+      async () =>
+        (await handoffs())
+          .slice(before)
+          .some(
+            (h) => h.event === "playing" && h.others === 1 && h.volume === 1,
+          ),
+      quickly,
+    )
+    .toBe(true);
+  await expect
+    .poll(playingDecks, quickly)
+    .toEqual([{ paused: false, volume: 1 }]);
+
+  // Pausing during the early start stops both players and the switch.
+  await progress.fill("18.5");
+  await expect.poll(async () => (await playingDecks()).length, quickly).toBe(2);
+  await desktop.getByRole("button", { name: "暂停", exact: true }).click();
+  await expect.poll(playingDecks, quickly).toEqual([]);
+  await page.waitForTimeout(2500);
+  await expect(title).toHaveText("Midnight Test");
+  expect(await playingDecks()).toEqual([]);
+  await desktop.getByRole("button", { name: "播放", exact: true }).click();
+  await expect(title).toHaveText("Blue Hour Test", { timeout: 20000 });
+  expect(
+    (await handoffs()).filter((h) => h.event === "ended").at(-1)?.others,
+  ).toBe(1);
+  expect(errors).toEqual([]);
+});
+
 test("one mode button defaults to list loop and preserves each choice across app reopen", async ({
   page,
   context,

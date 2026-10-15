@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { audio, seek, togglePlay } from "../music/playback";
+import { seekBy, togglePlay } from "../music/playback";
 import { useMusic } from "../music/store";
 import { useUi } from "./state";
 import type { View } from "./state";
@@ -52,11 +52,11 @@ export function useKeyboardShortcuts() {
       }
       if (e.key === "ArrowRight") {
         e.preventDefault();
-        seek(audio.currentTime + 5);
+        seekBy(5);
       }
       if (e.key === "ArrowLeft") {
         e.preventDefault();
-        seek(audio.currentTime - 5);
+        seekBy(-5);
       }
     };
     window.addEventListener("keydown", keyboard);

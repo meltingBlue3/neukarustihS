@@ -78,14 +78,21 @@ export async function ensureReadPermission(
 }
 
 // Files chosen this session play directly. Otherwise reopen the stored
-// handle, which may need the user's permission again.
+// handle, which may need the user's permission again; without `ask`, only a
+// handle that is already readable is used, since prompting needs a gesture.
 const sessionFiles = new Map<string, File>();
 export const rememberFile = (id: string, file: File) =>
   sessionFiles.set(id, file);
 export const forgetFile = (id: string) => sessionFiles.delete(id);
-export async function getTrackFile(track: Track) {
+export async function getTrackFile(track: Track, ask = true) {
   let file = sessionFiles.get(track.id);
-  if (!file && track.handle && (await ensureReadPermission(track.handle))) {
+  if (
+    !file &&
+    track.handle &&
+    (ask
+      ? await ensureReadPermission(track.handle)
+      : (await track.handle.queryPermission({ mode: "read" })) === "granted")
+  ) {
     file = await track.handle.getFile();
     sessionFiles.set(track.id, file);
   }
